@@ -1,0 +1,2 @@
+[console_scripts]
+tinyharness = tinyharness.cli:main

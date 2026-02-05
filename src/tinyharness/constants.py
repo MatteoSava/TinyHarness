@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+RUNS_DIR = ARTIFACTS_DIR / "runs"
+MLFLOW_ARTIFACTS_DIR = ARTIFACTS_DIR / "mlflow"
+STATE_DIR = PROJECT_ROOT / "state"
+MLFLOW_STATE_DIR = STATE_DIR / "mlflow"
+MODAL_STATE_DIR = STATE_DIR / "modal"
+MODAL_STATE_PATH = MODAL_STATE_DIR / "qwen-server.json"
+
+DEFAULT_MODAL_APP_NAME = "tinyharness-qwen-server"
+DEFAULT_MODAL_FUNCTION_NAME = "serve_openai_gateway"
+DEFAULT_MODAL_VOLUME_NAME = "tinyharness-qwen-gguf"
+DEFAULT_GPU_TYPE = "L4"
+
+DEFAULT_MODEL_REPO = "unsloth/Qwen3.5-35B-A3B-GGUF"
+DEFAULT_MODEL_FILE = "Qwen3.5-35B-A3B-UD-IQ3_S.gguf"
+DEFAULT_MODEL_ALIAS = "qwen3.5-35b-a3b-ud-iq3_s"
+DEFAULT_CONTEXT_WINDOW = 65536
+DEFAULT_PARALLEL_REQUESTS = 1
+DEFAULT_SERVER_PORT = 8000
+DEFAULT_LLAMA_PORT = 8001
+
+DEFAULT_HARBOR_DATASET = "terminal-bench@2.0"
+DEFAULT_TASK_SET = "smoke-v0"
+DEFAULT_TASKS = (
+    "cancel-async-tasks",
+    "filter-js-from-html",
+    "sqlite-db-truncate",
+)
+DEFAULT_RUNNER = "modal"
+
+DEFAULT_MLFLOW_EXPERIMENT = "tinyharness-smoke"
+DEFAULT_MLFLOW_PORT = 5000
+DEFAULT_MLFLOW_DB_PATH = MLFLOW_STATE_DIR / "mlflow.db"

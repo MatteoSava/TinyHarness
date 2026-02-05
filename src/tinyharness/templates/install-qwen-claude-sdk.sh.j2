@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+if command -v apk &> /dev/null; then
+    apk add --no-cache bash curl git procps python3
+elif command -v apt-get &> /dev/null; then
+    apt-get update
+    apt-get install -y bash curl git procps python3 python3-venv
+fi
+
+curl -fsSL https://claude.ai/install.sh | bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+export PATH="$HOME/.local/bin:$PATH"
+
+uv python install 3.12
+uv venv /installed-agent/.venv --python 3.12
+uv pip install --python /installed-agent/.venv/bin/python "claude-agent-sdk=={{ sdk_version }}"
+
+cat > /installed-agent/sdk_runner.py <<'PY'
+{{ runner_script }}
+PY
+
+chmod +x /installed-agent/sdk_runner.py
+/installed-agent/.venv/bin/python -m compileall /installed-agent/sdk_runner.py >/dev/null

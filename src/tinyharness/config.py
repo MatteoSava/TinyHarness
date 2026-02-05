@@ -1,0 +1,236 @@
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from tinyharness.constants import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_GPU_TYPE,
+    DEFAULT_HARBOR_DATASET,
+    DEFAULT_MLFLOW_DB_PATH,
+    DEFAULT_MLFLOW_EXPERIMENT,
+    DEFAULT_MLFLOW_PORT,
+    DEFAULT_MODAL_APP_NAME,
+    DEFAULT_MODAL_FUNCTION_NAME,
+    DEFAULT_MODAL_VOLUME_NAME,
+    DEFAULT_MODEL_ALIAS,
+    DEFAULT_MODEL_FILE,
+    DEFAULT_MODEL_REPO,
+    DEFAULT_PARALLEL_REQUESTS,
+    DEFAULT_RUNNER,
+    DEFAULT_SERVER_PORT,
+    DEFAULT_TASKS,
+    DEFAULT_TASK_SET,
+    MLFLOW_ARTIFACTS_DIR,
+    MODAL_STATE_PATH,
+    RUNS_DIR,
+)
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def _env(name: str, default: str | None = None, env: dict[str, str] | None = None) -> str | None:
+    source = env if env is not None else os.environ
+    value = source.get(name)
+    return value if value not in (None, "") else default
+
+
+def _int_env(name: str, default: int, env: dict[str, str] | None = None) -> int:
+    value = _env(name, env=env)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _csv_env(name: str, default: tuple[str, ...], env: dict[str, str] | None = None) -> tuple[str, ...]:
+    value = _env(name, env=env)
+    if value is None:
+        return default
+    items = tuple(item.strip() for item in value.split(",") if item.strip())
+    return items or default
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    modal_app_name: str = DEFAULT_MODAL_APP_NAME
+    modal_function_name: str = DEFAULT_MODAL_FUNCTION_NAME
+    modal_volume_name: str = DEFAULT_MODAL_VOLUME_NAME
+    modal_hf_secret_name: str | None = "huggingface-secret"
+    hf_repo_id: str = DEFAULT_MODEL_REPO
+    hf_filename: str = DEFAULT_MODEL_FILE
+    model_alias: str = DEFAULT_MODEL_ALIAS
+    gpu: str = DEFAULT_GPU_TYPE
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    parallel_requests: int = DEFAULT_PARALLEL_REQUESTS
+    server_port: int = DEFAULT_SERVER_PORT
+    llama_port: int = 8001
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> "ModelConfig":
+        return cls(
+            modal_app_name=_env("TINYHARNESS_MODAL_APP_NAME", DEFAULT_MODAL_APP_NAME, env) or DEFAULT_MODAL_APP_NAME,
+            modal_function_name=_env("TINYHARNESS_MODAL_FUNCTION_NAME", DEFAULT_MODAL_FUNCTION_NAME, env)
+            or DEFAULT_MODAL_FUNCTION_NAME,
+            modal_volume_name=_env("TINYHARNESS_MODAL_VOLUME_NAME", DEFAULT_MODAL_VOLUME_NAME, env)
+            or DEFAULT_MODAL_VOLUME_NAME,
+            modal_hf_secret_name=_env("TINYHARNESS_MODAL_HF_SECRET_NAME", "huggingface-secret", env),
+            hf_repo_id=_env("TINYHARNESS_MODEL_REPO", DEFAULT_MODEL_REPO, env) or DEFAULT_MODEL_REPO,
+            hf_filename=_env("TINYHARNESS_MODEL_FILE", DEFAULT_MODEL_FILE, env) or DEFAULT_MODEL_FILE,
+            model_alias=_env("TINYHARNESS_MODEL_ALIAS", DEFAULT_MODEL_ALIAS, env) or DEFAULT_MODEL_ALIAS,
+            gpu=_env("TINYHARNESS_GPU_TYPE", DEFAULT_GPU_TYPE, env) or DEFAULT_GPU_TYPE,
+            context_window=_int_env("TINYHARNESS_CONTEXT_WINDOW", DEFAULT_CONTEXT_WINDOW, env),
+            parallel_requests=_int_env("TINYHARNESS_PARALLEL_REQUESTS", DEFAULT_PARALLEL_REQUESTS, env),
+            server_port=_int_env("TINYHARNESS_SERVER_PORT", DEFAULT_SERVER_PORT, env),
+            llama_port=_int_env("TINYHARNESS_LLAMA_PORT", 8001, env),
+        )
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    import_path: str = "tinyharness.harbor_agents:QwenClaudeSDKAgent"
+    workspace_cwd: str = "/app"
+    max_turns: int = 20
+    max_thinking_tokens: int = 8192
+    settings_sources: tuple[str, ...] = ()
+    proxy_token_env: str = "TINYHARNESS_PROXY_TOKEN"
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> "AgentConfig":
+        settings_sources = _csv_env("TINYHARNESS_SETTING_SOURCES", (), env)
+        return cls(
+            import_path=_env("TINYHARNESS_AGENT_IMPORT_PATH", "tinyharness.harbor_agents:QwenClaudeSDKAgent", env)
+            or "tinyharness.harbor_agents:QwenClaudeSDKAgent",
+            workspace_cwd=_env("TINYHARNESS_WORKSPACE_CWD", "/app", env) or "/app",
+            max_turns=_int_env("TINYHARNESS_MAX_TURNS", 20, env),
+            max_thinking_tokens=_int_env("TINYHARNESS_MAX_THINKING_TOKENS", 8192, env),
+            settings_sources=settings_sources,
+            proxy_token_env=_env("TINYHARNESS_PROXY_TOKEN_ENV", "TINYHARNESS_PROXY_TOKEN", env)
+            or "TINYHARNESS_PROXY_TOKEN",
+        )
+
+
+@dataclass(frozen=True)
+class BenchmarkConfig:
+    dataset: str = DEFAULT_HARBOR_DATASET
+    task_set_name: str = DEFAULT_TASK_SET
+    tasks: tuple[str, ...] = DEFAULT_TASKS
+    jobs_dir: Path = RUNS_DIR
+    runner: str = DEFAULT_RUNNER
+    sandbox_timeout_secs: int = 60 * 60 * 4
+    sandbox_idle_timeout_secs: int = 60 * 20
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> "BenchmarkConfig":
+        return cls(
+            dataset=_env("TINYHARNESS_DATASET", DEFAULT_HARBOR_DATASET, env) or DEFAULT_HARBOR_DATASET,
+            task_set_name=_env("TINYHARNESS_TASK_SET", DEFAULT_TASK_SET, env) or DEFAULT_TASK_SET,
+            tasks=_csv_env("TINYHARNESS_TASKS", DEFAULT_TASKS, env),
+            jobs_dir=Path(_env("TINYHARNESS_JOBS_DIR", RUNS_DIR.as_posix(), env) or RUNS_DIR.as_posix()),
+            runner=_env("TINYHARNESS_RUNNER", DEFAULT_RUNNER, env) or DEFAULT_RUNNER,
+            sandbox_timeout_secs=_int_env("TINYHARNESS_MODAL_SANDBOX_TIMEOUT", 60 * 60 * 4, env),
+            sandbox_idle_timeout_secs=_int_env("TINYHARNESS_MODAL_IDLE_TIMEOUT", 60 * 20, env),
+        )
+
+
+@dataclass(frozen=True)
+class TrackingConfig:
+    experiment_name: str = DEFAULT_MLFLOW_EXPERIMENT
+    tracking_uri: str = f"sqlite:///{DEFAULT_MLFLOW_DB_PATH.resolve()}"
+    backend_store_path: Path = DEFAULT_MLFLOW_DB_PATH
+    artifact_root: Path = MLFLOW_ARTIFACTS_DIR
+    port: int = DEFAULT_MLFLOW_PORT
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> "TrackingConfig":
+        backend_store = Path(
+            _env("TINYHARNESS_MLFLOW_DB_PATH", DEFAULT_MLFLOW_DB_PATH.as_posix(), env)
+            or DEFAULT_MLFLOW_DB_PATH.as_posix()
+        )
+        tracking_uri = _env("MLFLOW_TRACKING_URI", f"sqlite:///{backend_store.resolve()}", env)
+        artifact_root = Path(
+            _env("TINYHARNESS_MLFLOW_ARTIFACT_ROOT", MLFLOW_ARTIFACTS_DIR.as_posix(), env)
+            or MLFLOW_ARTIFACTS_DIR.as_posix()
+        )
+        return cls(
+            experiment_name=_env("TINYHARNESS_MLFLOW_EXPERIMENT", DEFAULT_MLFLOW_EXPERIMENT, env)
+            or DEFAULT_MLFLOW_EXPERIMENT,
+            tracking_uri=tracking_uri or f"sqlite:///{backend_store.resolve()}",
+            backend_store_path=backend_store,
+            artifact_root=artifact_root,
+            port=_int_env("TINYHARNESS_MLFLOW_PORT", DEFAULT_MLFLOW_PORT, env),
+        )
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    model: ModelConfig
+    agent: AgentConfig
+    benchmark: BenchmarkConfig
+    tracking: TrackingConfig
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> "AppConfig":
+        return cls(
+            model=ModelConfig.from_env(env),
+            agent=AgentConfig.from_env(env),
+            benchmark=BenchmarkConfig.from_env(env),
+            tracking=TrackingConfig.from_env(env),
+        )
+
+
+def ensure_state_dirs(config: AppConfig) -> None:
+    config.benchmark.jobs_dir.mkdir(parents=True, exist_ok=True)
+    config.tracking.backend_store_path.parent.mkdir(parents=True, exist_ok=True)
+    config.tracking.artifact_root.mkdir(parents=True, exist_ok=True)
+    MODAL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def require_env_vars(*names: str, env: dict[str, str] | None = None) -> dict[str, str]:
+    source = env if env is not None else os.environ
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for name in names:
+        value = source.get(name)
+        if value:
+            resolved[name] = value
+        else:
+            missing.append(name)
+
+    if missing:
+        raise ConfigError(f"Missing required environment variables: {', '.join(missing)}")
+
+    return resolved
+
+
+def load_modal_state(path: Path = MODAL_STATE_PATH) -> dict[str, object]:
+    if not path.exists():
+        raise ConfigError(
+            f"Modal gateway metadata not found at {path}. Run `uv run tinyharness serve-qwen` first."
+        )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def resolve_gateway_base_url(path: Path = MODAL_STATE_PATH, env: dict[str, str] | None = None) -> str:
+    explicit = _env("ANTHROPIC_BASE_URL", env=env) or _env("TINYHARNESS_GATEWAY_URL", env=env)
+    if explicit:
+        return explicit
+
+    state = load_modal_state(path)
+    web_url = state.get("web_url")
+    if not isinstance(web_url, str) or not web_url:
+        raise ConfigError(f"Modal state file {path} does not contain a usable web_url.")
+    return web_url
+
+
+def resolve_proxy_token(config: AgentConfig, env: dict[str, str] | None = None) -> str:
+    source = env if env is not None else os.environ
+    value = source.get(config.proxy_token_env)
+    if not value:
+        raise ConfigError(
+            f"Missing proxy auth token env var {config.proxy_token_env}. Check .env.example."
+        )
+    return value
