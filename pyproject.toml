@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tinyharness"
+version = "0.1.0"
+description = "Tiny harness for Qwen-backed Claude-style Terminal-Bench smoke runs."
+readme = "AGENTS.md"
+requires-python = ">=3.12"
+dependencies = [
+  "claude-agent-sdk>=0.1.48,<0.2",
+  "harbor",
+  "mlflow",
+  "modal",
+]
+
+[project.scripts]
+tinyharness = "tinyharness.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.5",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tinyharness = ["templates/*.j2"]
+
+[tool.uv]
+package = true
