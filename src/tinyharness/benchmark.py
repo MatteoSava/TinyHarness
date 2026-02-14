@@ -12,7 +12,7 @@ from harbor.models.trial.config import EnvironmentConfig as HarborEnvironmentCon
 
 from tinyharness.config import AppConfig, ensure_state_dirs, resolve_gateway_base_url, resolve_proxy_token
 from tinyharness.constants import MODAL_STATE_PATH
-from tinyharness.mlflow_tracking import log_benchmark_run
+from tinyharness.mlflow_tracking import create_parent_run, finalize_benchmark_run, tracking_environment
 from tinyharness.results import JobSummary, load_job_summary, write_json, write_markdown_summary
 
 
@@ -21,8 +21,23 @@ def build_job_name(task_set_name: str) -> str:
     return f"{task_set_name}-{timestamp}"
 
 
-def build_harbor_job_config(config: AppConfig, *, base_url: str, proxy_token: str, job_name: str) -> JobConfig:
+def build_harbor_job_config(
+    config: AppConfig,
+    *,
+    base_url: str,
+    proxy_token: str,
+    job_name: str,
+    tracking_env: dict[str, str] | None = None,
+) -> JobConfig:
     dataset_name, version = config.benchmark.dataset.split("@", 1)
+    agent_env = {
+        "ANTHROPIC_BASE_URL": base_url,
+        "ANTHROPIC_API_KEY": proxy_token,
+        "ANTHROPIC_MODEL": config.model.model_alias,
+        "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1",
+    }
+    if tracking_env:
+        agent_env.update(tracking_env)
     return JobConfig(
         job_name=job_name,
         jobs_dir=config.benchmark.jobs_dir,
@@ -35,12 +50,7 @@ def build_harbor_job_config(config: AppConfig, *, base_url: str, proxy_token: st
                     "max_thinking_tokens": config.agent.max_thinking_tokens,
                     "workspace_cwd": config.agent.workspace_cwd,
                 },
-                env={
-                    "ANTHROPIC_BASE_URL": base_url,
-                    "ANTHROPIC_API_KEY": proxy_token,
-                    "ANTHROPIC_MODEL": config.model.model_alias,
-                    "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1",
-                },
+                env=agent_env,
             )
         ],
         environment=HarborEnvironmentConfig(
@@ -80,7 +90,6 @@ def run_smoke_benchmark(config: AppConfig) -> JobSummary:
     base_url = resolve_gateway_base_url()
     proxy_token = resolve_proxy_token(config.agent)
     job_name = build_job_name(config.benchmark.task_set_name)
-    job_config = build_harbor_job_config(config, base_url=base_url, proxy_token=proxy_token, job_name=job_name)
     run_dir = config.benchmark.jobs_dir / job_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -95,11 +104,34 @@ def run_smoke_benchmark(config: AppConfig) -> JobSummary:
             "model_file": config.model.hf_filename,
             "model_alias": config.model.model_alias,
             "gpu": config.model.gpu,
+            "gateway_max_containers": config.model.max_containers,
+            "gateway_scaledown_window_sec": config.model.scaledown_window_sec,
+            "parallel_requests": config.model.parallel_requests,
         },
     )
 
+    provisional_job_config = build_harbor_job_config(
+        config,
+        base_url=base_url,
+        proxy_token=proxy_token,
+        job_name=job_name,
+    )
     harbor_config_path = run_dir / "harbor-job-config.json"
-    harbor_config_path.write_text(job_config.model_dump_json(indent=2), encoding="utf-8")
+    harbor_config_path.write_text(provisional_job_config.model_dump_json(indent=2), encoding="utf-8")
+    parent_run = create_parent_run(
+        config=config,
+        job_name=job_name,
+        server_config_path=server_config_path,
+        harbor_config_path=harbor_config_path,
+    )
+    final_job_config = build_harbor_job_config(
+        config,
+        base_url=base_url,
+        proxy_token=proxy_token,
+        job_name=job_name,
+        tracking_env=tracking_environment(config, parent_run, job_name=job_name),
+    )
+    harbor_config_path.write_text(final_job_config.model_dump_json(indent=2), encoding="utf-8")
     result = _run_harbor(harbor_config_path)
     _write_harbor_subprocess_logs(run_dir, result)
     if result.returncode != 0:
@@ -109,11 +141,12 @@ def run_smoke_benchmark(config: AppConfig) -> JobSummary:
 
     summary = load_job_summary(run_dir)
     write_markdown_summary(summary)
-    mlflow_run_id = log_benchmark_run(
+    finalize_benchmark_run(
         config=config,
+        parent_run=parent_run,
         summary=summary,
         server_config_path=server_config_path,
         server_state_path=MODAL_STATE_PATH if MODAL_STATE_PATH.exists() else None,
     )
-    write_json(run_dir / "mlflow.json", {"run_id": mlflow_run_id})
+    write_json(run_dir / "mlflow.json", {"run_id": parent_run.run_id, "tracking_uri": parent_run.tracking_uri})
     return summary

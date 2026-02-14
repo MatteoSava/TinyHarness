@@ -6,7 +6,7 @@ Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 Requires-Dist: claude-agent-sdk<0.2,>=0.1.48
 Requires-Dist: harbor
-Requires-Dist: mlflow
+Requires-Dist: mlflow[auth]
 Requires-Dist: modal
 
 # AGENTS.md
@@ -20,6 +20,21 @@ TinyHarness benchmarks coding-agent behavior on Terminal-Bench 2.0. The v0 path 
 - `uv run tinyharness serve-qwen`
 - `uv run tinyharness run-smoke`
 - `uv run tinyharness mlflow-ui`
+
+## Local Commands
+- Install deps: `uv sync --group dev`
+- Deploy the Qwen gateway on Modal: `uv run tinyharness serve-qwen`
+- Run the Terminal-Bench smoke subset: `uv run tinyharness run-smoke`
+- Print the summary for one saved run: `uv run tinyharness fetch-results smoke-v0-20260312-110505`
+- Open the local MLflow UI: `uv run tinyharness mlflow-ui`
+- Run the test suite locally: `uv run pytest -q`
+
+### Notes
+- `serve-qwen` uses your authenticated `modal` CLI session if present.
+- `serve-qwen` also uses the Modal secret `huggingface-secret` if it exists.
+- `run-smoke` expects `TINYHARNESS_PROXY_TOKEN` to be available in `.env` or the shell.
+- Benchmark artifacts land under `artifacts/runs/<run-id>/`.
+- MLflow uses `sqlite:///./state/mlflow/mlflow.db` with artifacts in `./artifacts/mlflow`.
 
 ## Architecture
 - Runtime config lives in [`ARCHITECTURE.md`](/Users/matteo/Developer/TinyHarness/ARCHITECTURE.md).
@@ -49,4 +64,5 @@ TinyHarness benchmarks coding-agent behavior on Terminal-Bench 2.0. The v0 path 
 ## CI/CD
 - No CI is configured yet.
 - The local acceptance path is `uv sync`, `uv run pytest`, then manual Modal and benchmark execution.
-
+- If Modal is already authenticated via `modal` CLI profile/config, you do not need `MODAL_TOKEN_ID` or `MODAL_TOKEN_SECRET` in `.env`.
+- If the Modal workspace already has a secret named `huggingface-secret`, you do not need a local `HF_TOKEN` in `.env`.

@@ -9,11 +9,18 @@ from tinyharness.constants import (
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_GPU_TYPE,
     DEFAULT_HARBOR_DATASET,
+    DEFAULT_MLFLOW_ALLOWED_HOSTS,
+    DEFAULT_MLFLOW_ARTIFACT_MOUNT_PATH,
+    DEFAULT_MLFLOW_ARTIFACT_VOLUME_NAME,
     DEFAULT_MLFLOW_DB_PATH,
     DEFAULT_MLFLOW_EXPERIMENT,
+    DEFAULT_MLFLOW_MODAL_APP_NAME,
+    DEFAULT_MLFLOW_MODAL_FUNCTION_NAME,
     DEFAULT_MLFLOW_PORT,
     DEFAULT_MODAL_APP_NAME,
     DEFAULT_MODAL_FUNCTION_NAME,
+    DEFAULT_MODAL_MAX_CONTAINERS,
+    DEFAULT_MODAL_SCALEDOWN_WINDOW_SEC,
     DEFAULT_MODAL_VOLUME_NAME,
     DEFAULT_MODEL_ALIAS,
     DEFAULT_MODEL_FILE,
@@ -24,6 +31,7 @@ from tinyharness.constants import (
     DEFAULT_TASKS,
     DEFAULT_TASK_SET,
     MLFLOW_ARTIFACTS_DIR,
+    MLFLOW_MODAL_STATE_PATH,
     MODAL_STATE_PATH,
     RUNS_DIR,
 )
@@ -68,6 +76,8 @@ class ModelConfig:
     parallel_requests: int = DEFAULT_PARALLEL_REQUESTS
     server_port: int = DEFAULT_SERVER_PORT
     llama_port: int = 8001
+    max_containers: int = DEFAULT_MODAL_MAX_CONTAINERS
+    scaledown_window_sec: int = DEFAULT_MODAL_SCALEDOWN_WINDOW_SEC
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "ModelConfig":
@@ -86,6 +96,12 @@ class ModelConfig:
             parallel_requests=_int_env("TINYHARNESS_PARALLEL_REQUESTS", DEFAULT_PARALLEL_REQUESTS, env),
             server_port=_int_env("TINYHARNESS_SERVER_PORT", DEFAULT_SERVER_PORT, env),
             llama_port=_int_env("TINYHARNESS_LLAMA_PORT", 8001, env),
+            max_containers=_int_env("TINYHARNESS_MODAL_MAX_CONTAINERS", DEFAULT_MODAL_MAX_CONTAINERS, env),
+            scaledown_window_sec=_int_env(
+                "TINYHARNESS_MODAL_SCALEDOWN_WINDOW_SEC",
+                DEFAULT_MODAL_SCALEDOWN_WINDOW_SEC,
+                env,
+            ),
         )
 
 
@@ -139,9 +155,20 @@ class BenchmarkConfig:
 @dataclass(frozen=True)
 class TrackingConfig:
     experiment_name: str = DEFAULT_MLFLOW_EXPERIMENT
-    tracking_uri: str = f"sqlite:///{DEFAULT_MLFLOW_DB_PATH.resolve()}"
+    tracking_uri: str | None = None
     backend_store_path: Path = DEFAULT_MLFLOW_DB_PATH
     artifact_root: Path = MLFLOW_ARTIFACTS_DIR
+    modal_app_name: str = DEFAULT_MLFLOW_MODAL_APP_NAME
+    modal_function_name: str = DEFAULT_MLFLOW_MODAL_FUNCTION_NAME
+    backend_store_uri: str | None = None
+    artifact_volume_name: str = DEFAULT_MLFLOW_ARTIFACT_VOLUME_NAME
+    artifact_mount_path: str = DEFAULT_MLFLOW_ARTIFACT_MOUNT_PATH
+    admin_username: str = "admin"
+    admin_password_env: str = "TINYHARNESS_MLFLOW_ADMIN_PASSWORD"
+    flask_secret_key_env: str = "TINYHARNESS_MLFLOW_FLASK_SECRET_KEY"
+    server_max_containers: int = 1
+    server_scaledown_window_sec: int = 60
+    allowed_hosts: str = DEFAULT_MLFLOW_ALLOWED_HOSTS
     port: int = DEFAULT_MLFLOW_PORT
 
     @classmethod
@@ -150,7 +177,6 @@ class TrackingConfig:
             _env("TINYHARNESS_MLFLOW_DB_PATH", DEFAULT_MLFLOW_DB_PATH.as_posix(), env)
             or DEFAULT_MLFLOW_DB_PATH.as_posix()
         )
-        tracking_uri = _env("MLFLOW_TRACKING_URI", f"sqlite:///{backend_store.resolve()}", env)
         artifact_root = Path(
             _env("TINYHARNESS_MLFLOW_ARTIFACT_ROOT", MLFLOW_ARTIFACTS_DIR.as_posix(), env)
             or MLFLOW_ARTIFACTS_DIR.as_posix()
@@ -158,9 +184,43 @@ class TrackingConfig:
         return cls(
             experiment_name=_env("TINYHARNESS_MLFLOW_EXPERIMENT", DEFAULT_MLFLOW_EXPERIMENT, env)
             or DEFAULT_MLFLOW_EXPERIMENT,
-            tracking_uri=tracking_uri or f"sqlite:///{backend_store.resolve()}",
+            tracking_uri=_env("MLFLOW_TRACKING_URI", env=env),
             backend_store_path=backend_store,
             artifact_root=artifact_root,
+            modal_app_name=_env("TINYHARNESS_MLFLOW_MODAL_APP_NAME", DEFAULT_MLFLOW_MODAL_APP_NAME, env)
+            or DEFAULT_MLFLOW_MODAL_APP_NAME,
+            modal_function_name=_env("TINYHARNESS_MLFLOW_MODAL_FUNCTION_NAME", DEFAULT_MLFLOW_MODAL_FUNCTION_NAME, env)
+            or DEFAULT_MLFLOW_MODAL_FUNCTION_NAME,
+            backend_store_uri=_env("TINYHARNESS_MLFLOW_BACKEND_STORE_URI", env=env),
+            artifact_volume_name=_env(
+                "TINYHARNESS_MLFLOW_ARTIFACT_VOLUME_NAME",
+                DEFAULT_MLFLOW_ARTIFACT_VOLUME_NAME,
+                env,
+            )
+            or DEFAULT_MLFLOW_ARTIFACT_VOLUME_NAME,
+            artifact_mount_path=_env(
+                "TINYHARNESS_MLFLOW_ARTIFACT_MOUNT_PATH",
+                DEFAULT_MLFLOW_ARTIFACT_MOUNT_PATH,
+                env,
+            )
+            or DEFAULT_MLFLOW_ARTIFACT_MOUNT_PATH,
+            admin_username=_env("TINYHARNESS_MLFLOW_ADMIN_USERNAME", "admin", env) or "admin",
+            admin_password_env=_env(
+                "TINYHARNESS_MLFLOW_ADMIN_PASSWORD_ENV",
+                "TINYHARNESS_MLFLOW_ADMIN_PASSWORD",
+                env,
+            )
+            or "TINYHARNESS_MLFLOW_ADMIN_PASSWORD",
+            flask_secret_key_env=_env(
+                "TINYHARNESS_MLFLOW_FLASK_SECRET_KEY_ENV",
+                "TINYHARNESS_MLFLOW_FLASK_SECRET_KEY",
+                env,
+            )
+            or "TINYHARNESS_MLFLOW_FLASK_SECRET_KEY",
+            server_max_containers=_int_env("TINYHARNESS_MLFLOW_MAX_CONTAINERS", 1, env),
+            server_scaledown_window_sec=_int_env("TINYHARNESS_MLFLOW_SCALEDOWN_WINDOW_SEC", 60, env),
+            allowed_hosts=_env("TINYHARNESS_MLFLOW_ALLOWED_HOSTS", DEFAULT_MLFLOW_ALLOWED_HOSTS, env)
+            or DEFAULT_MLFLOW_ALLOWED_HOSTS,
             port=_int_env("TINYHARNESS_MLFLOW_PORT", DEFAULT_MLFLOW_PORT, env),
         )
 
@@ -214,6 +274,14 @@ def load_modal_state(path: Path = MODAL_STATE_PATH) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_mlflow_modal_state(path: Path = MLFLOW_MODAL_STATE_PATH) -> dict[str, object]:
+    if not path.exists():
+        raise ConfigError(
+            f"Modal MLflow metadata not found at {path}. Run `uv run tinyharness serve-mlflow` first."
+        )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def resolve_gateway_base_url(path: Path = MODAL_STATE_PATH, env: dict[str, str] | None = None) -> str:
     explicit = _env("ANTHROPIC_BASE_URL", env=env) or _env("TINYHARNESS_GATEWAY_URL", env=env)
     if explicit:
@@ -232,5 +300,44 @@ def resolve_proxy_token(config: AgentConfig, env: dict[str, str] | None = None) 
     if not value:
         raise ConfigError(
             f"Missing proxy auth token env var {config.proxy_token_env}. Check .env.example."
+        )
+    return value
+
+
+def resolve_tracking_uri(config: TrackingConfig, env: dict[str, str] | None = None) -> str:
+    explicit = _env("MLFLOW_TRACKING_URI", env=env) or config.tracking_uri
+    if explicit:
+        return explicit
+    return local_tracking_uri(config)
+
+
+def local_tracking_uri(config: TrackingConfig) -> str:
+    return f"sqlite:///{config.backend_store_path.resolve()}"
+
+
+def resolve_remote_tracking_uri(path: Path = MLFLOW_MODAL_STATE_PATH) -> str:
+    state = load_mlflow_modal_state(path)
+    web_url = state.get("web_url")
+    if not isinstance(web_url, str) or not web_url:
+        raise ConfigError(f"Modal MLflow state file {path} does not contain a usable web_url.")
+    return web_url
+
+
+def resolve_mlflow_password(config: TrackingConfig, env: dict[str, str] | None = None) -> str:
+    source = env if env is not None else os.environ
+    value = source.get(config.admin_password_env)
+    if not value:
+        raise ConfigError(
+            f"Missing MLflow admin password env var {config.admin_password_env}. Check .env.example."
+        )
+    return value
+
+
+def resolve_mlflow_flask_secret(config: TrackingConfig, env: dict[str, str] | None = None) -> str:
+    source = env if env is not None else os.environ
+    value = source.get(config.flask_secret_key_env)
+    if not value:
+        raise ConfigError(
+            f"Missing MLflow Flask secret env var {config.flask_secret_key_env}. Check .env.example."
         )
     return value

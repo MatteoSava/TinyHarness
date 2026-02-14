@@ -3,10 +3,10 @@
 ## Summary
 TinyHarness has four moving parts:
 
-1. A local CLI that resolves config, deploys the Modal app, launches Harbor jobs, and logs MLflow runs.
+1. A local CLI that resolves config, deploys the Modal apps, launches Harbor jobs, and logs MLflow runs.
 2. A Modal app that downloads the GGUF, starts `llama-server`, and fronts it with a LiteLLM gateway that Claude Code can target through `ANTHROPIC_BASE_URL`.
 3. A custom Harbor installed agent that installs Claude Code plus the Anthropic Agent SDK inside each benchmark sandbox and runs the task with the `claude_code` preset.
-4. A local MLflow tracking store that records one parent run per benchmark invocation and one child run per task.
+4. A local MLflow tracking store with one parent run per benchmark invocation and one live child run plus trace per task. A remote Modal-hosted MLflow server remains optional.
 
 ## Runtime Layout
 - `src/tinyharness/config.py`: typed config objects and env resolution
@@ -16,12 +16,17 @@ TinyHarness has four moving parts:
 - `src/tinyharness/benchmark.py`: Harbor job generation and orchestration
 - `src/tinyharness/mlflow_tracking.py`: MLflow experiment logging
 - `src/tinyharness/results.py`: run parsing and summaries
+- `src/tinyharness/mlflow_server.py`: optional Modal MLflow server spec and bootstrap launcher
 
 ## Persistent State
 - `artifacts/runs/<job-name>/`: Harbor job output, summaries, and captured subprocess logs
-- `artifacts/mlflow/`: MLflow artifact store
-- `state/mlflow/mlflow.db`: SQLite backend store
 - `state/modal/qwen-server.json`: last deployed gateway metadata
+- `state/mlflow/mlflow.db`: local SQLite backend store
+- `state/modal/mlflow-server.json`: optional deployed MLflow server metadata
+
+## Tracking Modes
+- Default: local MLflow via `sqlite:///state/mlflow/mlflow.db`
+- Optional remote mode: deploy `serve-mlflow`, then set `MLFLOW_TRACKING_URI` to the remote server URL before running benchmarks
 
 ## Defaults
 - Dataset: `terminal-bench@2.0`
@@ -30,3 +35,4 @@ TinyHarness has four moving parts:
 - Model alias: `qwen3.5-35b-a3b-ud-iq3_s`
 - Context window: `65536`
 - Claude Code settings source: programmatic only
+- MLflow default backend: local SQLite

@@ -12,6 +12,9 @@ test:
 serve:
     uv run tinyharness serve-qwen
 
+serve-mlflow:
+    uv run tinyharness serve-mlflow
+
 serve-dev:
     uv run tinyharness serve-qwen --dev
 
@@ -24,6 +27,8 @@ fetch run_id:
 mlflow:
     uv run tinyharness mlflow-ui
 
+mlflow-remote:
+    uv run tinyharness mlflow-ui --remote
+
 status:
     uv run tinyharness --help
-

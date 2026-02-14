@@ -7,6 +7,7 @@ src/tinyharness/config.py
 src/tinyharness/constants.py
 src/tinyharness/env.py
 src/tinyharness/harbor_agents.py
+src/tinyharness/mlflow_server.py
 src/tinyharness/mlflow_tracking.py
 src/tinyharness/modal_server.py
 src/tinyharness/results.py

@@ -171,8 +171,8 @@ def _wait_for_port(port: int, timeout_sec: float = 120.0) -> None:
     volumes={_SPEC.mount_path: _VOLUME},
     secrets=_SECRETS,
     timeout=60 * 60 * 12,
-    max_containers=1,
-    scaledown_window=60 * 10,
+    max_containers=_CONFIG.max_containers,
+    scaledown_window=_CONFIG.scaledown_window_sec,
     name=DEFAULT_MODAL_FUNCTION_NAME,
 )
 @modal.concurrent(max_inputs=1, target_inputs=1)

@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from tinyharness.config import AppConfig, ConfigError, resolve_gateway_base_url, resolve_proxy_token
+from tinyharness.config import (
+    AppConfig,
+    ConfigError,
+    resolve_gateway_base_url,
+    resolve_proxy_token,
+    resolve_tracking_uri,
+)
 
 
 def test_config_from_env_uses_explicit_values() -> None:
@@ -47,3 +53,21 @@ def test_resolve_proxy_token_raises_when_missing() -> None:
     with pytest.raises(ConfigError):
         resolve_proxy_token(config.agent, env={})
 
+
+def test_resolve_tracking_uri_prefers_explicit_env() -> None:
+    config = AppConfig.from_env({"MLFLOW_TRACKING_URI": "https://mlflow.example"})
+
+    assert resolve_tracking_uri(config.tracking, env={"MLFLOW_TRACKING_URI": "https://override.example"}) == "https://override.example"
+
+
+def test_resolve_tracking_uri_defaults_to_local_sqlite_even_when_remote_state_exists(tmp_path: Path, monkeypatch) -> None:
+    state_path = tmp_path / "mlflow-state.json"
+    state_path.write_text(json.dumps({"web_url": "https://modal-mlflow.example"}), encoding="utf-8")
+    config = AppConfig.from_env({})
+    from tinyharness import config as config_module
+
+    monkeypatch.setattr(config_module, "MLFLOW_MODAL_STATE_PATH", state_path)
+
+    expected = f"sqlite:///{config.tracking.backend_store_path.resolve()}"
+    assert resolve_tracking_uri(config.tracking, env={}) == expected
+    assert resolve_tracking_uri(config.tracking, env={"MLFLOW_TRACKING_URI": ""}) == expected
