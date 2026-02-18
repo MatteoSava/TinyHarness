@@ -15,7 +15,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 uv python install 3.12
 uv venv /installed-agent/.venv --python 3.12
-uv pip install --python /installed-agent/.venv/bin/python "claude-agent-sdk=={{ sdk_version }}"
+uv pip install --python /installed-agent/.venv/bin/python \
+  "claude-agent-sdk=={{ sdk_version }}" \
+  "mlflow>=3.10.1"
 
 cat > /installed-agent/sdk_runner.py <<'PY'
 {{ runner_script }}

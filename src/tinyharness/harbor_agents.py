@@ -63,6 +63,12 @@ class QwenClaudeSDKAgent(BaseInstalledAgent):
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "IS_SANDBOX": "1",
             "HOME": os.environ.get("HOME", "/root"),
+            "MLFLOW_TRACKING_URI": os.environ.get("MLFLOW_TRACKING_URI", ""),
+            "MLFLOW_TRACKING_USERNAME": os.environ.get("MLFLOW_TRACKING_USERNAME", ""),
+            "MLFLOW_TRACKING_PASSWORD": os.environ.get("MLFLOW_TRACKING_PASSWORD", ""),
+            "MLFLOW_EXPERIMENT_ID": os.environ.get("MLFLOW_EXPERIMENT_ID", ""),
+            "TINYHARNESS_PARENT_RUN_ID": os.environ.get("TINYHARNESS_PARENT_RUN_ID", ""),
+            "TINYHARNESS_JOB_NAME": os.environ.get("TINYHARNESS_JOB_NAME", ""),
         }
         env = {key: value for key, value in env.items() if value}
 
