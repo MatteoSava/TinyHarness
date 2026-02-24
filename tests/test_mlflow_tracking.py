@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -231,6 +232,49 @@ def test_mlflow_logs_parent_and_updates_live_child_runs(tmp_path: Path, monkeypa
     assert child.data.metrics["solved"] == 1.0
     assert child.data.metrics["tool_call_count"] == 1.0
     assert child.data.tags["failure_type"] == "passed"
+
+
+def test_create_parent_run_logs_all_task_selection_when_using_n_tasks(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("TINYHARNESS_MLFLOW_ADMIN_PASSWORD", "secret-password")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+    db_path = tmp_path / "state" / "mlflow" / "mlflow.db"
+    artifact_root = tmp_path / "artifacts" / "mlflow"
+    config = AppConfig.from_env(
+        {
+            "TINYHARNESS_JOBS_DIR": (tmp_path / "artifacts" / "runs").as_posix(),
+            "TINYHARNESS_MLFLOW_DB_PATH": db_path.as_posix(),
+            "TINYHARNESS_MLFLOW_ARTIFACT_ROOT": artifact_root.as_posix(),
+        }
+    )
+    config = replace(
+        config,
+        benchmark=replace(
+            config.benchmark,
+            task_set_name="tb10-v0",
+            tasks=None,
+            n_tasks=10,
+        ),
+    )
+
+    server_config_path = tmp_path / "server-config.json"
+    harbor_config_path = tmp_path / "harbor-job-config.json"
+    write_json(server_config_path, {"gateway_url": "https://gateway.example"})
+    write_json(harbor_config_path, {"job_name": "tb10"})
+
+    parent_run = create_parent_run(
+        config=config,
+        job_name="tb10-v0-20260312-120000",
+        server_config_path=server_config_path,
+        harbor_config_path=harbor_config_path,
+    )
+
+    client = MlflowClient(tracking_uri=parent_run.tracking_uri)
+    parent = client.get_run(parent_run.run_id)
+
+    assert parent.data.params["task_selection"] == "all"
+    assert parent.data.params["task_names"] == ""
+    assert parent.data.params["configured_n_tasks"] == "10"
 
 
 def test_tracking_environment_skips_local_sqlite_for_remote_sandboxes(tmp_path: Path, monkeypatch) -> None:

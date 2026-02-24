@@ -142,6 +142,18 @@ def _log_common_tags(config: AppConfig) -> None:
     )
 
 
+def _task_names_param(tasks: tuple[str, ...] | None) -> str:
+    if not tasks:
+        return ""
+    return ",".join(tasks)
+
+
+def _task_selection_param(config: AppConfig) -> str:
+    if config.benchmark.tasks:
+        return "explicit"
+    return "all"
+
+
 def _harbor_config_sha256(harbor_config_path: Path) -> str:
     payload = json.loads(harbor_config_path.read_text(encoding="utf-8"))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -170,7 +182,9 @@ def create_parent_run(
                     "gateway_scaledown_window_sec": config.model.scaledown_window_sec,
                     "mlflow_server_max_containers": config.tracking.server_max_containers,
                     "mlflow_server_scaledown_window_sec": config.tracking.server_scaledown_window_sec,
-                    "task_names": ",".join(config.benchmark.tasks),
+                    "task_selection": _task_selection_param(config),
+                    "task_names": _task_names_param(config.benchmark.tasks),
+                    "configured_n_tasks": config.benchmark.n_tasks or 0,
                     "benchmark_dataset": config.benchmark.dataset,
                     "benchmark_runner": config.benchmark.runner,
                     "agent_import_path": config.agent.import_path,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from tinyharness.benchmark import build_harbor_job_config
 from tinyharness.config import AppConfig
 
@@ -29,3 +31,26 @@ def test_build_harbor_job_config_uses_modal_and_custom_agent() -> None:
     assert job_config.agents[0].env["TINYHARNESS_PARENT_RUN_ID"] == "parent-run"
     assert job_config.datasets[0].name == "terminal-bench"
     assert job_config.datasets[0].task_names == list(config.benchmark.tasks)
+
+
+def test_build_harbor_job_config_supports_first_n_tasks_without_explicit_task_names() -> None:
+    config = AppConfig.from_env({})
+    config = replace(
+        config,
+        benchmark=replace(
+            config.benchmark,
+            task_set_name="tb10-v0",
+            tasks=None,
+            n_tasks=10,
+        ),
+    )
+
+    job_config = build_harbor_job_config(
+        config,
+        base_url="https://gateway.example",
+        proxy_token="secret-token",
+        job_name="tb10-v0-20260312-120000",
+    )
+
+    assert job_config.datasets[0].task_names is None
+    assert job_config.datasets[0].n_tasks == 10

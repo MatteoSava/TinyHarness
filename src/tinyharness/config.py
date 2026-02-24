@@ -54,6 +54,13 @@ def _int_env(name: str, default: int, env: dict[str, str] | None = None) -> int:
     return int(value)
 
 
+def _optional_int_env(name: str, env: dict[str, str] | None = None) -> int | None:
+    value = _env(name, env=env)
+    if value is None:
+        return None
+    return int(value)
+
+
 def _csv_env(name: str, default: tuple[str, ...], env: dict[str, str] | None = None) -> tuple[str, ...]:
     value = _env(name, env=env)
     if value is None:
@@ -133,7 +140,8 @@ class AgentConfig:
 class BenchmarkConfig:
     dataset: str = DEFAULT_HARBOR_DATASET
     task_set_name: str = DEFAULT_TASK_SET
-    tasks: tuple[str, ...] = DEFAULT_TASKS
+    tasks: tuple[str, ...] | None = DEFAULT_TASKS
+    n_tasks: int | None = None
     jobs_dir: Path = RUNS_DIR
     runner: str = DEFAULT_RUNNER
     sandbox_timeout_secs: int = 60 * 60 * 4
@@ -145,6 +153,7 @@ class BenchmarkConfig:
             dataset=_env("TINYHARNESS_DATASET", DEFAULT_HARBOR_DATASET, env) or DEFAULT_HARBOR_DATASET,
             task_set_name=_env("TINYHARNESS_TASK_SET", DEFAULT_TASK_SET, env) or DEFAULT_TASK_SET,
             tasks=_csv_env("TINYHARNESS_TASKS", DEFAULT_TASKS, env),
+            n_tasks=_optional_int_env("TINYHARNESS_N_TASKS", env),
             jobs_dir=Path(_env("TINYHARNESS_JOBS_DIR", RUNS_DIR.as_posix(), env) or RUNS_DIR.as_posix()),
             runner=_env("TINYHARNESS_RUNNER", DEFAULT_RUNNER, env) or DEFAULT_RUNNER,
             sandbox_timeout_secs=_int_env("TINYHARNESS_MODAL_SANDBOX_TIMEOUT", 60 * 60 * 4, env),

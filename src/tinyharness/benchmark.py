@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,10 +16,18 @@ from tinyharness.constants import MODAL_STATE_PATH
 from tinyharness.mlflow_tracking import create_parent_run, finalize_benchmark_run, tracking_environment
 from tinyharness.results import JobSummary, load_job_summary, write_json, write_markdown_summary
 
+_UNSET = object()
+
 
 def build_job_name(task_set_name: str) -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     return f"{task_set_name}-{timestamp}"
+
+
+def _resolve_task_names(tasks: tuple[str, ...] | None) -> list[str] | None:
+    if not tasks:
+        return None
+    return list(tasks)
 
 
 def build_harbor_job_config(
@@ -65,7 +74,8 @@ def build_harbor_job_config(
                 registry=RemoteRegistryInfo(),
                 name=dataset_name,
                 version=version,
-                task_names=list(config.benchmark.tasks),
+                task_names=_resolve_task_names(config.benchmark.tasks),
+                n_tasks=config.benchmark.n_tasks,
             )
         ],
     )
@@ -85,7 +95,24 @@ def _run_harbor(config_path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def run_smoke_benchmark(config: AppConfig) -> JobSummary:
+def run_benchmark(
+    config: AppConfig,
+    *,
+    task_set_name: str | None = None,
+    tasks: tuple[str, ...] | None | object = _UNSET,
+    n_tasks: int | None = None,
+) -> JobSummary:
+    if task_set_name is not None or tasks is not _UNSET or n_tasks is not None:
+        config = replace(
+            config,
+            benchmark=replace(
+                config.benchmark,
+                task_set_name=task_set_name or config.benchmark.task_set_name,
+                tasks=config.benchmark.tasks if tasks is _UNSET else tasks,
+                n_tasks=n_tasks if n_tasks is not None else config.benchmark.n_tasks,
+            ),
+        )
+
     ensure_state_dirs(config)
     base_url = resolve_gateway_base_url()
     proxy_token = resolve_proxy_token(config.agent)
@@ -150,3 +177,7 @@ def run_smoke_benchmark(config: AppConfig) -> JobSummary:
     )
     write_json(run_dir / "mlflow.json", {"run_id": parent_run.run_id, "tracking_uri": parent_run.tracking_uri})
     return summary
+
+
+def run_smoke_benchmark(config: AppConfig) -> JobSummary:
+    return run_benchmark(config)

@@ -19,6 +19,7 @@ def test_config_from_env_uses_explicit_values() -> None:
         "TINYHARNESS_MODEL_ALIAS": "custom-model",
         "TINYHARNESS_CONTEXT_WINDOW": "8192",
         "TINYHARNESS_TASKS": "task-a,task-b",
+        "TINYHARNESS_N_TASKS": "10",
         "TINYHARNESS_MLFLOW_DB_PATH": "tmp/mlflow.db",
     }
 
@@ -27,6 +28,7 @@ def test_config_from_env_uses_explicit_values() -> None:
     assert config.model.model_alias == "custom-model"
     assert config.model.context_window == 8192
     assert config.benchmark.tasks == ("task-a", "task-b")
+    assert config.benchmark.n_tasks == 10
     assert config.tracking.backend_store_path == Path("tmp/mlflow.db")
 
 
