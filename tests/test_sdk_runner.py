@@ -200,6 +200,7 @@ def test_sdk_runner_logs_live_mlflow_metrics_and_trace_artifacts(monkeypatch, tm
     assert create_run_call["experiment_id"] == "exp-123"
     assert create_run_call["parent_run_id"] == "parent-run-1"
     assert create_run_call["nested"] is True
+    assert create_run_call["tags"]["run_kind"] == "task_trial"
 
     trace_tags = set(collector["trace_tags"])
     assert ("trace-1", "mlflow.run_id", "child-run-1") in trace_tags
@@ -237,5 +238,6 @@ def test_sdk_runner_logs_live_mlflow_metrics_and_trace_artifacts(monkeypatch, tm
     assert telemetry_artifact["tool_call_count"] == 1
 
     metric_keys = {key for payload in collector["metrics"] for key in payload}
-    assert "tool_output_bytes" in metric_keys
-    assert "average_turn_latency_ms" in metric_keys
+    assert "trial.tool_output_bytes" in metric_keys
+    assert "trial.average_turn_latency_ms" in metric_keys
+    assert "trial.prompt_tokens" in metric_keys

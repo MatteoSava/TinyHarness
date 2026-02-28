@@ -350,6 +350,7 @@ async def _run_sdk(
             nested=parent_run_id is not None,
             parent_run_id=parent_run_id,
             tags={
+                "run_kind": "task_trial",
                 "task_name": task_name,
                 "trial_name": trial_name,
                 "job_name": os.environ.get("TINYHARNESS_JOB_NAME", ""),
@@ -607,27 +608,27 @@ async def _run_sdk(
     if tracking_enabled and mlflow_run_id is not None:
         with mlflow.start_run(run_id=mlflow_run_id):
             metrics = {
-                "turn_count": len(stream_state.turn_latencies_ms),
-                "tool_call_count": stream_state.tool_call_count,
-                "shell_command_count": stream_state.shell_command_count,
-                "tool_output_bytes": stream_state.tool_output_bytes,
-                "tool_output_tokens_estimate": tool_output_tokens_estimate,
-                "prompt_tokens": prompt_tokens or 0,
-                "cache_tokens": cache_tokens or 0,
-                "output_tokens": completion_tokens or 0,
+                "trial.turn_count": len(stream_state.turn_latencies_ms),
+                "trial.tool_call_count": stream_state.tool_call_count,
+                "trial.shell_command_count": stream_state.shell_command_count,
+                "trial.tool_output_bytes": stream_state.tool_output_bytes,
+                "trial.tool_output_tokens_estimate": tool_output_tokens_estimate,
+                "trial.prompt_tokens": prompt_tokens or 0,
+                "trial.cache_tokens": cache_tokens or 0,
+                "trial.output_tokens": completion_tokens or 0,
             }
             if telemetry["first_event_latency_ms"] is not None:
-                metrics["first_event_latency_ms"] = telemetry["first_event_latency_ms"]
+                metrics["trial.first_event_latency_ms"] = telemetry["first_event_latency_ms"]
             if telemetry["first_text_latency_ms"] is not None:
-                metrics["first_text_latency_ms"] = telemetry["first_text_latency_ms"]
+                metrics["trial.first_text_latency_ms"] = telemetry["first_text_latency_ms"]
             if telemetry["response_complete_latency_ms"] is not None:
-                metrics["response_complete_latency_ms"] = telemetry["response_complete_latency_ms"]
+                metrics["trial.response_complete_latency_ms"] = telemetry["response_complete_latency_ms"]
             if average_turn_latency_ms is not None:
-                metrics["average_turn_latency_ms"] = average_turn_latency_ms
+                metrics["trial.average_turn_latency_ms"] = average_turn_latency_ms
             if max_turn_latency_ms is not None:
-                metrics["max_turn_latency_ms"] = max_turn_latency_ms
+                metrics["trial.max_turn_latency_ms"] = max_turn_latency_ms
             if result_message and result_message.duration_ms and completion_tokens:
-                metrics["tokens_per_second"] = completion_tokens / (result_message.duration_ms / 1000.0)
+                metrics["trial.tokens_per_second"] = completion_tokens / (result_message.duration_ms / 1000.0)
             mlflow.log_metrics(metrics)
 
     if result_message and result_message.is_error:

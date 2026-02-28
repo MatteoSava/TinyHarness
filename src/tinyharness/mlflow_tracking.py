@@ -41,6 +41,12 @@ class ParentRunInfo:
     tracking_uri: str
 
 
+@dataclass(frozen=True)
+class ChildRunInfo:
+    run_id: str
+    trace_id: str | None
+
+
 def _git_commit() -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -154,6 +160,14 @@ def _task_selection_param(config: AppConfig) -> str:
     return "all"
 
 
+def _benchmark_metric_name(name: str) -> str:
+    return f"benchmark.{name}"
+
+
+def _trial_metric_name(name: str) -> str:
+    return f"trial.{name}"
+
+
 def _harbor_config_sha256(harbor_config_path: Path) -> str:
     payload = json.loads(harbor_config_path.read_text(encoding="utf-8"))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -171,6 +185,7 @@ def create_parent_run(
         experiment_id, tracking_uri = _ensure_experiment(config)
         with mlflow.start_run(experiment_id=experiment_id, run_name=job_name) as run:
             _log_common_tags(config)
+            mlflow.set_tag("run_kind", "benchmark")
             mlflow.log_params(
                 {
                     "model_repo": config.model.hf_repo_id,
@@ -205,6 +220,48 @@ def create_parent_run(
                 experiment_id=experiment_id,
                 tracking_uri=tracking_uri,
             )
+
+
+def _trial_results_row(trial: TrialSummary, child_run: ChildRunInfo) -> dict[str, object | None]:
+    return {
+        "task_name": trial.task_name,
+        "trial_name": trial.trial_name,
+        "mlflow_run_id": child_run.run_id,
+        "trace_id": child_run.trace_id,
+        "model_name": trial.model_name,
+        "passed": trial.passed,
+        "solved": trial.solved,
+        "pass_at_1": trial.pass_at_1,
+        "timeout": trial.timeout,
+        "failure_type": trial.failure_type,
+        "score": trial.score,
+        "wall_clock_seconds": trial.wall_clock_seconds,
+        "duration_ms": trial.duration_ms,
+        "duration_api_ms": trial.duration_api_ms,
+        "prompt_tokens": trial.prompt_tokens,
+        "cache_tokens": trial.cache_tokens,
+        "output_tokens": trial.output_tokens,
+        "tokens_per_second": trial.tokens_per_second,
+        "turn_count": trial.turn_count,
+        "average_turn_latency_ms": trial.average_turn_latency_ms,
+        "max_turn_latency_ms": trial.max_turn_latency_ms,
+        "tool_call_count": trial.tool_call_count,
+        "shell_command_count": trial.shell_command_count,
+        "tool_output_bytes": trial.tool_output_bytes,
+        "tool_output_tokens_estimate": trial.tool_output_tokens_estimate,
+        "first_event_latency_ms": trial.first_event_latency_ms,
+        "first_text_latency_ms": trial.first_text_latency_ms,
+        "response_complete_latency_ms": trial.response_complete_latency_ms,
+    }
+
+
+def _write_trial_results_table(summary: JobSummary, child_runs: dict[str, ChildRunInfo]) -> Path:
+    output_path = summary.job_dir / "trial-results.jsonl"
+    with output_path.open("w", encoding="utf-8") as handle:
+        for trial in summary.trials:
+            child_run = child_runs[trial.trial_name]
+            handle.write(json.dumps(_trial_results_row(trial, child_run), ensure_ascii=False) + "\n")
+    return output_path
 
 
 def tracking_environment(config: AppConfig, parent_run: ParentRunInfo, *, job_name: str) -> dict[str, str]:
@@ -463,7 +520,7 @@ def _ensure_trace(*, experiment_id: str, run_id: str, trial: TrialSummary) -> st
     return _posthoc_trace(experiment_id=experiment_id, run_id=run_id, trial=trial)
 
 
-def _create_child_run(parent_run: ParentRunInfo, trial: TrialSummary) -> None:
+def _create_child_run(parent_run: ParentRunInfo, trial: TrialSummary) -> ChildRunInfo:
     existing_run = _find_existing_child_run(parent_run, trial)
     if existing_run is not None:
         with mlflow.start_run(run_id=existing_run.info.run_id):
@@ -476,7 +533,7 @@ def _create_child_run(parent_run: ParentRunInfo, trial: TrialSummary) -> None:
             if trace_id is not None:
                 mlflow.set_tag("trace_id", trace_id)
             mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
-        return
+        return ChildRunInfo(run_id=existing_run.info.run_id, trace_id=trace_id)
 
     with mlflow.start_run(
         experiment_id=parent_run.experiment_id,
@@ -493,9 +550,10 @@ def _create_child_run(parent_run: ParentRunInfo, trial: TrialSummary) -> None:
         if trace_id is not None:
             mlflow.set_tag("trace_id", trace_id)
         mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
+        return ChildRunInfo(run_id=child_run.info.run_id, trace_id=trace_id)
 
 
-def _log_trial_run(parent_run: ParentRunInfo, trial: TrialSummary) -> None:
+def _log_trial_run(parent_run: ParentRunInfo, trial: TrialSummary) -> ChildRunInfo:
     if trial.mlflow_run_id is not None:
         try:
             with mlflow.start_run(run_id=trial.mlflow_run_id):
@@ -508,12 +566,12 @@ def _log_trial_run(parent_run: ParentRunInfo, trial: TrialSummary) -> None:
                 if trace_id is not None:
                     mlflow.set_tag("trace_id", trace_id)
                 mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
-            return
+            return ChildRunInfo(run_id=trial.mlflow_run_id, trace_id=trace_id)
         except MlflowException as exc:
             if not _is_missing_run_error(exc):
                 raise
 
-    _create_child_run(parent_run, trial)
+    return _create_child_run(parent_run, trial)
 
 
 def _log_parent_metrics(summary: JobSummary) -> None:
@@ -521,86 +579,90 @@ def _log_parent_metrics(summary: JobSummary) -> None:
     if n_trials == 0:
         return
     timeout_count = sum(trial.timeout for trial in summary.trials)
-    mlflow.log_metric("solved_pct", sum(trial.solved for trial in summary.trials) / n_trials)
-    mlflow.log_metric("pass_at_1", sum(trial.pass_at_1 for trial in summary.trials) / n_trials)
-    mlflow.log_metric("timeout_pct", timeout_count / n_trials)
-    mlflow.log_metric("mean_score", summary.mean_score)
-    mlflow.log_metric("n_trials", n_trials)
-    mlflow.log_metric("n_errors", summary.job_result.stats.n_errors)
+    mlflow.log_metric(_benchmark_metric_name("solved_pct"), sum(trial.solved for trial in summary.trials) / n_trials)
+    mlflow.log_metric(_benchmark_metric_name("pass_at_1"), sum(trial.pass_at_1 for trial in summary.trials) / n_trials)
+    mlflow.log_metric(_benchmark_metric_name("timeout_pct"), timeout_count / n_trials)
+    mlflow.log_metric(_benchmark_metric_name("mean_score"), summary.mean_score)
+    mlflow.log_metric(_benchmark_metric_name("n_trials"), n_trials)
+    mlflow.log_metric(_benchmark_metric_name("n_errors"), summary.job_result.stats.n_errors)
     mlflow.log_metric(
-        "avg_wall_clock_seconds",
+        _benchmark_metric_name("avg_wall_clock_seconds"),
         sum((trial.wall_clock_seconds or 0.0) for trial in summary.trials) / n_trials,
     )
-    mlflow.log_metric("avg_turns_per_task", sum(trial.turn_count for trial in summary.trials) / n_trials)
     mlflow.log_metric(
-        "avg_tool_calls_per_task",
+        _benchmark_metric_name("avg_turns_per_task"),
+        sum(trial.turn_count for trial in summary.trials) / n_trials,
+    )
+    mlflow.log_metric(
+        _benchmark_metric_name("avg_tool_calls_per_task"),
         sum(trial.tool_call_count for trial in summary.trials) / n_trials,
     )
     mlflow.log_metric(
-        "avg_shell_commands_per_task",
+        _benchmark_metric_name("avg_shell_commands_per_task"),
         sum(trial.shell_command_count for trial in summary.trials) / n_trials,
     )
     mlflow.log_metric(
-        "avg_tool_output_bytes_per_task",
+        _benchmark_metric_name("avg_tool_output_bytes_per_task"),
         sum(trial.tool_output_bytes for trial in summary.trials) / n_trials,
     )
     mlflow.log_metric(
-        "avg_tool_output_tokens_estimate_per_task",
+        _benchmark_metric_name("avg_tool_output_tokens_estimate_per_task"),
         sum(trial.tool_output_tokens_estimate for trial in summary.trials) / n_trials,
     )
     mlflow.log_metric(
-        "avg_first_event_latency_ms",
+        _benchmark_metric_name("avg_first_event_latency_ms"),
         sum((trial.first_event_latency_ms or 0) for trial in summary.trials) / n_trials,
     )
     mlflow.log_metric(
-        "avg_first_text_latency_ms",
+        _benchmark_metric_name("avg_first_text_latency_ms"),
         sum((trial.first_text_latency_ms or 0) for trial in summary.trials) / n_trials,
     )
     mlflow.log_metric(
-        "avg_response_complete_latency_ms",
+        _benchmark_metric_name("avg_response_complete_latency_ms"),
         sum((trial.response_complete_latency_ms or 0) for trial in summary.trials) / n_trials,
     )
     failure_counts: dict[str, int] = {}
     for trial in summary.trials:
         failure_counts[trial.failure_type] = failure_counts.get(trial.failure_type, 0) + 1
     for failure_type, count in sorted(failure_counts.items()):
-        mlflow.log_metric(f"failure_count_{failure_type}", count)
+        mlflow.log_metric(_benchmark_metric_name(f"failure_count.{failure_type}"), count)
 
 
 def _log_trial_metrics(trial: TrialSummary) -> None:
     mlflow.set_tags(
         {
+            "run_kind": "task_trial",
             "trial_name": trial.trial_name,
             "task_name": trial.task_name,
             "failure_type": trial.failure_type,
         }
     )
-    mlflow.log_metric("solved", trial.solved)
-    mlflow.log_metric("pass_at_1", trial.pass_at_1)
-    mlflow.log_metric("timeout", trial.timeout)
-    mlflow.log_metric("score", trial.score)
+    mlflow.log_metric(_trial_metric_name("solved"), trial.solved)
+    mlflow.log_metric(_trial_metric_name("pass_at_1"), trial.pass_at_1)
+    mlflow.log_metric(_trial_metric_name("timeout"), trial.timeout)
+    mlflow.log_metric(_trial_metric_name("score"), trial.score)
     if trial.wall_clock_seconds is not None:
-        mlflow.log_metric("wall_clock_seconds", trial.wall_clock_seconds)
-    mlflow.log_metric("turn_count", trial.turn_count)
-    mlflow.log_metric("tool_call_count", trial.tool_call_count)
-    mlflow.log_metric("shell_command_count", trial.shell_command_count)
-    mlflow.log_metric("tool_output_bytes", trial.tool_output_bytes)
-    mlflow.log_metric("tool_output_tokens_estimate", trial.tool_output_tokens_estimate)
-    mlflow.log_metric("prompt_tokens", trial.prompt_tokens)
-    mlflow.log_metric("cache_tokens", trial.cache_tokens)
-    mlflow.log_metric("output_tokens", trial.output_tokens)
+        mlflow.log_metric(_trial_metric_name("wall_clock_seconds"), trial.wall_clock_seconds)
+    mlflow.log_metric(_trial_metric_name("turn_count"), trial.turn_count)
+    mlflow.log_metric(_trial_metric_name("tool_call_count"), trial.tool_call_count)
+    mlflow.log_metric(_trial_metric_name("shell_command_count"), trial.shell_command_count)
+    mlflow.log_metric(_trial_metric_name("tool_output_bytes"), trial.tool_output_bytes)
+    mlflow.log_metric(_trial_metric_name("tool_output_tokens_estimate"), trial.tool_output_tokens_estimate)
+    mlflow.log_metric(_trial_metric_name("prompt_tokens"), trial.prompt_tokens)
+    mlflow.log_metric(_trial_metric_name("cache_tokens"), trial.cache_tokens)
+    mlflow.log_metric(_trial_metric_name("output_tokens"), trial.output_tokens)
     if trial.average_turn_latency_ms is not None:
-        mlflow.log_metric("average_turn_latency_ms", trial.average_turn_latency_ms)
+        mlflow.log_metric(_trial_metric_name("average_turn_latency_ms"), trial.average_turn_latency_ms)
     if trial.max_turn_latency_ms is not None:
-        mlflow.log_metric("max_turn_latency_ms", trial.max_turn_latency_ms)
+        mlflow.log_metric(_trial_metric_name("max_turn_latency_ms"), trial.max_turn_latency_ms)
     if trial.first_event_latency_ms is not None:
-        mlflow.log_metric("first_event_latency_ms", trial.first_event_latency_ms)
+        mlflow.log_metric(_trial_metric_name("first_event_latency_ms"), trial.first_event_latency_ms)
     if trial.first_text_latency_ms is not None:
-        mlflow.log_metric("first_text_latency_ms", trial.first_text_latency_ms)
+        mlflow.log_metric(_trial_metric_name("first_text_latency_ms"), trial.first_text_latency_ms)
     if trial.response_complete_latency_ms is not None:
-        mlflow.log_metric("response_complete_latency_ms", trial.response_complete_latency_ms)
+        mlflow.log_metric(_trial_metric_name("response_complete_latency_ms"), trial.response_complete_latency_ms)
     if trial.tokens_per_second is not None:
-        mlflow.log_metric("tokens_per_second", trial.tokens_per_second)
+        mlflow.log_metric(_trial_metric_name("tokens_per_second"), trial.tokens_per_second)
 
 
 def finalize_benchmark_run(
@@ -612,11 +674,13 @@ def finalize_benchmark_run(
     server_state_path: Path | None = None,
 ) -> None:
     with _tracking_credentials(config.tracking):
+        child_runs: dict[str, ChildRunInfo] = {}
         for trial in summary.trials:
-            _log_trial_run(parent_run, trial)
+            child_runs[trial.trial_name] = _log_trial_run(parent_run, trial)
 
         with mlflow.start_run(run_id=parent_run.run_id):
             _log_common_tags(config)
+            mlflow.set_tag("run_kind", "benchmark")
             harbor_config_path = summary.job_dir / "harbor-job-config.json"
             if harbor_config_path.exists():
                 mlflow.log_param("harbor_config_sha256", _harbor_config_sha256(harbor_config_path))
@@ -624,6 +688,8 @@ def finalize_benchmark_run(
             summary_path = summary.job_dir / "summary.md"
             if summary_path.exists():
                 mlflow.log_artifact(summary_path.as_posix(), artifact_path="run")
+            trial_results_path = _write_trial_results_table(summary, child_runs)
+            mlflow.log_artifact(trial_results_path.as_posix(), artifact_path="run")
             for extra in ("harbor.stdout.txt", "harbor.stderr.txt", "job.log", "result.json", "mlflow.json", "harbor-job-config.json"):
                 artifact_path = summary.job_dir / extra
                 if artifact_path.exists():

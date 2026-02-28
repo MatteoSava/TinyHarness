@@ -225,13 +225,28 @@ def test_mlflow_logs_parent_and_updates_live_child_runs(tmp_path: Path, monkeypa
     assert len(runs) == 4
 
     parent = client.get_run(parent_run.run_id)
-    assert parent.data.metrics["solved_pct"] == 1.0
-    assert parent.data.metrics["avg_tool_calls_per_task"] == 1.0
+    assert parent.data.tags["run_kind"] == "benchmark"
+    assert parent.data.metrics["benchmark.solved_pct"] == 1.0
+    assert parent.data.metrics["benchmark.avg_tool_calls_per_task"] == 1.0
+    assert "solved_pct" not in parent.data.metrics
 
     child = client.get_run(child_run_ids["cancel-async-tasks"])
-    assert child.data.metrics["solved"] == 1.0
-    assert child.data.metrics["tool_call_count"] == 1.0
+    assert child.data.tags["run_kind"] == "task_trial"
+    assert child.data.metrics["trial.solved"] == 1.0
+    assert child.data.metrics["trial.tool_call_count"] == 1.0
     assert child.data.tags["failure_type"] == "passed"
+    assert "solved" not in child.data.metrics
+
+    trial_results_path = run_dir / "trial-results.jsonl"
+    assert trial_results_path.exists()
+    trial_rows = [
+        json.loads(line)
+        for line in trial_results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(trial_rows) == 3
+    assert {row["mlflow_run_id"] for row in trial_rows} == set(child_run_ids.values())
+    assert all(row["trace_id"] for row in trial_rows)
 
 
 def test_create_parent_run_logs_all_task_selection_when_using_n_tasks(tmp_path: Path, monkeypatch) -> None:
@@ -272,6 +287,7 @@ def test_create_parent_run_logs_all_task_selection_when_using_n_tasks(tmp_path: 
     client = MlflowClient(tracking_uri=parent_run.tracking_uri)
     parent = client.get_run(parent_run.run_id)
 
+    assert parent.data.tags["run_kind"] == "benchmark"
     assert parent.data.params["task_selection"] == "all"
     assert parent.data.params["task_names"] == ""
     assert parent.data.params["configured_n_tasks"] == "10"
@@ -347,6 +363,7 @@ def test_mlflow_creates_child_runs_post_hoc_when_live_run_ids_are_missing(tmp_pa
     child_runs = [run for run in runs if run.info.run_id != parent_run.run_id]
     assert len(child_runs) == 3
     assert all(run.data.tags["failure_type"] == "passed" for run in child_runs)
+    assert all(run.data.tags["run_kind"] == "task_trial" for run in child_runs)
     traces = mlflow.search_traces(
         locations=[experiment.experiment_id],
         max_results=10,
@@ -364,6 +381,16 @@ def test_mlflow_creates_child_runs_post_hoc_when_live_run_ids_are_missing(tmp_pa
     assert len(bash_spans) == 3
     assert all(span.inputs == {"command": "ls -la"} for span in bash_spans)
     assert all(span.outputs == {"stdout": "ok"} for span in bash_spans)
+
+    trial_results_path = run_dir / "trial-results.jsonl"
+    trial_rows = [
+        json.loads(line)
+        for line in trial_results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(trial_rows) == 3
+    assert all(row["mlflow_run_id"] for row in trial_rows)
+    assert all(row["trace_id"] for row in trial_rows)
 
 
 def test_mlflow_falls_back_when_trial_run_ids_are_unknown_locally(tmp_path: Path, monkeypatch) -> None:
@@ -417,6 +444,7 @@ def test_mlflow_falls_back_when_trial_run_ids_are_unknown_locally(tmp_path: Path
     child_runs = [run for run in runs if run.info.run_id != parent_run.run_id]
     assert len(child_runs) == 3
     assert all(run.data.tags["failure_type"] == "passed" for run in child_runs)
+    assert all(run.data.tags["run_kind"] == "task_trial" for run in child_runs)
 
     traces = mlflow.search_traces(
         locations=[experiment.experiment_id],
@@ -435,6 +463,16 @@ def test_mlflow_falls_back_when_trial_run_ids_are_unknown_locally(tmp_path: Path
     assert len(bash_spans) == 3
     assert all(span.inputs == {"command": "ls -la"} for span in bash_spans)
     assert all(span.outputs == {"stdout": "ok"} for span in bash_spans)
+
+    trial_results_path = run_dir / "trial-results.jsonl"
+    trial_rows = [
+        json.loads(line)
+        for line in trial_results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(trial_rows) == 3
+    assert all(row["mlflow_run_id"] for row in trial_rows)
+    assert all(row["trace_id"] for row in trial_rows)
 
 
 def test_mlflow_finalize_is_idempotent_for_local_posthoc_runs(tmp_path: Path, monkeypatch) -> None:
