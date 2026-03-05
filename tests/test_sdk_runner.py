@@ -20,6 +20,11 @@ class _FakeClaudeSDKClient:
 
     async def connect(self) -> None:
         self.connected = True
+        debug_stderr = getattr(self.options, "debug_stderr", None)
+        if debug_stderr is not None:
+            debug_stderr.write("debug: connected\n")
+            if hasattr(debug_stderr, "flush"):
+                debug_stderr.flush()
 
     async def query(self, instruction: str) -> None:
         self.queried_instruction = instruction
@@ -151,6 +156,7 @@ def test_sdk_runner_logs_live_mlflow_metrics_and_trace_artifacts(monkeypatch, tm
     monkeypatch.setenv("TINYHARNESS_PARENT_RUN_ID", "parent-run-1")
     monkeypatch.setenv("TINYHARNESS_JOB_NAME", "smoke-v0-20260312-120000")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example")
+    monkeypatch.setenv("TINYHARNESS_RUN_MODE", "debug")
 
     _FakeClaudeSDKClient.messages = [
         AssistantMessage(
@@ -216,6 +222,7 @@ def test_sdk_runner_logs_live_mlflow_metrics_and_trace_artifacts(monkeypatch, tm
     telemetry = summary["metadata"]["telemetry"]
     assert summary["metadata"]["mlflow_run_id"] == "child-run-1"
     assert summary["metadata"]["trace_id"] == "trace-1"
+    assert summary["metadata"]["correlation_id"]
     assert telemetry["turn_count"] == 2
     assert telemetry["tool_call_count"] == 1
     assert telemetry["shell_command_count"] == 1
@@ -236,8 +243,91 @@ def test_sdk_runner_logs_live_mlflow_metrics_and_trace_artifacts(monkeypatch, tm
 
     telemetry_artifact = json.loads((logs_dir / "telemetry.json").read_text(encoding="utf-8"))
     assert telemetry_artifact["tool_call_count"] == 1
+    sdk_options = json.loads((logs_dir / "sdk-options.json").read_text(encoding="utf-8"))
+    assert sdk_options["cwd"] == "/app"
+    assert sdk_options["model"] == "qwen3.5-35b-a3b-ud-iq3_s"
+    assert sdk_options["max_turns"] == 8
+    assert sdk_options["permission_mode"] == "bypassPermissions"
+    assert sdk_options["prompt_source"] == "dspy-gepa-seed"
+    assert "TinyHarness benchmark agent" in sdk_options["system_prompt"]
+    assert sdk_options["tools"] == ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "LS"]
+    assert sdk_options["allowed_tools"] == ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "LS"]
+    assert sdk_options["env"]["ANTHROPIC_BASE_URL"] == "https://gateway.example"
+    assert (logs_dir / "claude-debug.log").read_text(encoding="utf-8") == "debug: connected\n"
 
     metric_keys = {key for payload in collector["metrics"] for key in payload}
     assert "trial.tool_output_bytes" in metric_keys
     assert "trial.average_turn_latency_ms" in metric_keys
     assert "trial.prompt_tokens" in metric_keys
+
+
+def test_sdk_runner_skips_debug_artifacts_and_live_tracing_in_lean_mode(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(sdk_runner, "ClaudeSDKClient", _FakeClaudeSDKClient)
+    monkeypatch.setenv("TINYHARNESS_RUN_MODE", "lean")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("MLFLOW_EXPERIMENT_ID", raising=False)
+    monkeypatch.delenv("TINYHARNESS_PARENT_RUN_ID", raising=False)
+
+    if sdk_runner.mlflow is not None:
+        monkeypatch.setattr(
+            sdk_runner.mlflow,
+            "start_span",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("mlflow span should not start in lean mode")),
+        )
+        monkeypatch.setattr(
+            sdk_runner.mlflow,
+            "start_run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("mlflow run should not start in lean mode")),
+        )
+
+    _FakeClaudeSDKClient.messages = [
+        AssistantMessage(
+            content=[
+                TextBlock(text="Inspecting the workspace."),
+                ToolUseBlock(id="tool-1", name="Bash", input={"command": "ls -la"}),
+            ],
+            model="qwen",
+        ),
+        UserMessage(
+            content=[ToolResultBlock(tool_use_id="tool-1", content="file.txt")],
+            parent_tool_use_id="tool-1",
+            tool_use_result={"stdout": "file.txt"},
+        ),
+        AssistantMessage(content=[TextBlock(text="Done.")], model="qwen"),
+        ResultMessage(
+            subtype="success",
+            duration_ms=1200,
+            duration_api_ms=1100,
+            is_error=False,
+            num_turns=2,
+            session_id="session-1",
+            stop_reason="end_turn",
+            usage={"input_tokens": 10, "output_tokens": 4, "cache_read_input_tokens": 2},
+            result="ok",
+        ),
+    ]
+
+    logs_dir = tmp_path / "cancel-async-tasks__trial" / "agent"
+    exit_code = asyncio.run(
+        sdk_runner._run_sdk(
+            instruction="fix the task",
+            cwd="/app",
+            logs_dir=logs_dir,
+            max_turns=8,
+            max_thinking_tokens=512,
+            model="qwen3.5-35b-a3b-ud-iq3_s",
+        )
+    )
+
+    assert exit_code == 0
+    assert (logs_dir / "assistant.txt").exists()
+    assert (logs_dir / "summary.json").exists()
+    assert not (logs_dir / "claude-debug.log").exists()
+    assert not (logs_dir / "sdk-options.json").exists()
+    assert not (logs_dir / "sdk-messages.jsonl").exists()
+    assert not (logs_dir / "sdk-trace.jsonl").exists()
+    assert not (logs_dir / "telemetry.json").exists()
+
+    summary = json.loads((logs_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["metadata"]["run_mode"] == "lean"
+    assert summary["metadata"]["telemetry"]["turn_count"] == 2

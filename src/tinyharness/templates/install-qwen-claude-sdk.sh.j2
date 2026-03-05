@@ -17,11 +17,16 @@ uv python install 3.12
 uv venv /installed-agent/.venv --python 3.12
 uv pip install --python /installed-agent/.venv/bin/python \
   "claude-agent-sdk=={{ sdk_version }}" \
-  "mlflow>=3.10.1"
+  "dspy=={{ dspy_version }}" \
+  "gepa[dspy]=={{ gepa_version }}"{{ extra_python_packages }}
+
+cat > /installed-agent/dspy_prompt.py <<'PY'
+{{ dspy_prompt_script }}
+PY
 
 cat > /installed-agent/sdk_runner.py <<'PY'
 {{ runner_script }}
 PY
 
 chmod +x /installed-agent/sdk_runner.py
-/installed-agent/.venv/bin/python -m compileall /installed-agent/sdk_runner.py >/dev/null
+/installed-agent/.venv/bin/python -m compileall /installed-agent/dspy_prompt.py /installed-agent/sdk_runner.py >/dev/null

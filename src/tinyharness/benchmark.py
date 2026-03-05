@@ -6,12 +6,13 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.job.config import JobConfig, RegistryDatasetConfig, RemoteRegistryInfo
 from harbor.models.trial.config import AgentConfig as HarborAgentConfig
 from harbor.models.trial.config import EnvironmentConfig as HarborEnvironmentConfig
 
-from tinyharness.config import AppConfig, ensure_state_dirs, resolve_gateway_base_url, resolve_proxy_token
+from tinyharness.config import AppConfig, BenchmarkMode, ensure_state_dirs, resolve_gateway_base_url, resolve_proxy_token
 from tinyharness.constants import MODAL_STATE_PATH
 from tinyharness.mlflow_tracking import create_parent_run, finalize_benchmark_run, tracking_environment
 from tinyharness.results import JobSummary, load_job_summary, write_json, write_markdown_summary
@@ -44,6 +45,8 @@ def build_harbor_job_config(
         "ANTHROPIC_API_KEY": proxy_token,
         "ANTHROPIC_MODEL": config.model.model_alias,
         "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1",
+        "TINYHARNESS_JOB_NAME": job_name,
+        "TINYHARNESS_RUN_MODE": config.benchmark.mode.value,
     }
     if tracking_env:
         agent_env.update(tracking_env)
@@ -58,6 +61,7 @@ def build_harbor_job_config(
                     "max_turns": config.agent.max_turns,
                     "max_thinking_tokens": config.agent.max_thinking_tokens,
                     "workspace_cwd": config.agent.workspace_cwd,
+                    "benchmark_mode": config.benchmark.mode.value,
                 },
                 env=agent_env,
             )
@@ -88,11 +92,56 @@ def _write_harbor_subprocess_logs(run_dir: Path, result: subprocess.CompletedPro
 
 def _run_harbor(config_path: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["uv", "run", "harbor", "run", "--config", config_path.as_posix()],
+        [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "tinyharness.harbor_runner",
+            "--config",
+            config_path.as_posix(),
+        ],
         text=True,
         capture_output=True,
         check=False,
     )
+
+
+def _fetch_trial_gateway_debug_artifacts(
+    *,
+    base_url: str,
+    proxy_token: str,
+    trial_name: str,
+    trial_dir: Path,
+    replay_count: int = 1,
+) -> None:
+    headers = {"Authorization": f"Bearer {proxy_token}"}
+    output_dir = trial_dir / "gateway"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timeout = httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=60.0)
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        requests_response = client.get(
+            f"{base_url.rstrip('/')}/debug/requests",
+            headers=headers,
+            params={"trial_name": trial_name},
+        )
+        requests_response.raise_for_status()
+        requests_payload = requests_response.json()
+        requests_path = output_dir / "requests.jsonl"
+        with requests_path.open("w", encoding="utf-8") as handle:
+            for record in requests_payload.get("requests", []):
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        replay_response = client.post(
+            f"{base_url.rstrip('/')}/debug/replay",
+            headers=headers,
+            json={"trial_name": trial_name, "count": replay_count},
+        )
+        replay_response.raise_for_status()
+        (output_dir / "replay.json").write_text(
+            json.dumps(replay_response.json(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
 
 def run_benchmark(
@@ -131,9 +180,19 @@ def run_benchmark(
             "model_file": config.model.hf_filename,
             "model_alias": config.model.model_alias,
             "gpu": config.model.gpu,
+            "context_window": config.model.context_window,
+            "temperature": config.model.temperature,
+            "top_p": config.model.top_p,
+            "top_k": config.model.top_k,
+            "seed": config.model.seed,
+            "cache_prompt": config.model.cache_prompt,
+            "gateway_debug": config.model.gateway_debug,
             "gateway_max_containers": config.model.max_containers,
             "gateway_scaledown_window_sec": config.model.scaledown_window_sec,
             "parallel_requests": config.model.parallel_requests,
+            "run_mode": config.benchmark.mode.value,
+            "gateway_debug_enabled": bool(config.model.gateway_debug),
+            "live_tracing_enabled": bool(config.benchmark.mode == BenchmarkMode.DEBUG),
         },
     )
 
@@ -167,6 +226,19 @@ def run_benchmark(
         )
 
     summary = load_job_summary(run_dir)
+    if config.model.gateway_debug and config.benchmark.mode == BenchmarkMode.DEBUG:
+        for trial in summary.trials:
+            try:
+                _fetch_trial_gateway_debug_artifacts(
+                    base_url=base_url,
+                    proxy_token=proxy_token,
+                    trial_name=trial.trial_name,
+                    trial_dir=trial.trial_dir,
+                )
+            except Exception as exc:
+                gateway_dir = trial.trial_dir / "gateway"
+                gateway_dir.mkdir(parents=True, exist_ok=True)
+                (gateway_dir / "error.txt").write_text(str(exc), encoding="utf-8")
     write_markdown_summary(summary)
     finalize_benchmark_run(
         config=config,

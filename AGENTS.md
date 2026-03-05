@@ -13,6 +13,7 @@ TinyHarness benchmarks coding-agent behavior on Terminal-Bench 2.0. The default 
 ## Local Commands
 - Install deps: `uv sync --group dev`
 - Deploy the Qwen gateway on Modal: `uv run tinyharness serve-qwen`
+- Print the DSPy/GEPA-backed agent prompt config: `uv run tinyharness agent-prompt "fix the task"`
 - Run the Terminal-Bench smoke subset: `uv run tinyharness run-smoke`
 - Print the summary for one saved run: `uv run tinyharness fetch-results smoke-v0-20260312-110505`
 - Launch the local MLflow UI: `uv run tinyharness mlflow-ui`

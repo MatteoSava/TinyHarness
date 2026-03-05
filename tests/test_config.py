@@ -7,6 +7,7 @@ import pytest
 
 from tinyharness.config import (
     AppConfig,
+    BenchmarkMode,
     ConfigError,
     resolve_gateway_base_url,
     resolve_proxy_token,
@@ -18,6 +19,12 @@ def test_config_from_env_uses_explicit_values() -> None:
     env = {
         "TINYHARNESS_MODEL_ALIAS": "custom-model",
         "TINYHARNESS_CONTEXT_WINDOW": "8192",
+        "TINYHARNESS_TEMPERATURE": "0.0",
+        "TINYHARNESS_TOP_P": "1.0",
+        "TINYHARNESS_TOP_K": "1",
+        "TINYHARNESS_SEED": "42",
+        "TINYHARNESS_GATEWAY_DEBUG": "true",
+        "TINYHARNESS_LITELLM_PORT": "8010",
         "TINYHARNESS_TASKS": "task-a,task-b",
         "TINYHARNESS_N_TASKS": "10",
         "TINYHARNESS_MLFLOW_DB_PATH": "tmp/mlflow.db",
@@ -27,6 +34,13 @@ def test_config_from_env_uses_explicit_values() -> None:
 
     assert config.model.model_alias == "custom-model"
     assert config.model.context_window == 8192
+    assert config.model.temperature == 0.0
+    assert config.model.top_p == 1.0
+    assert config.model.top_k == 1
+    assert config.model.seed == 42
+    assert config.model.gateway_debug is True
+    assert config.model.litellm_port == 8010
+    assert config.benchmark.mode == BenchmarkMode.DEBUG
     assert config.benchmark.tasks == ("task-a", "task-b")
     assert config.benchmark.n_tasks == 10
     assert config.tracking.backend_store_path == Path("tmp/mlflow.db")
@@ -73,3 +87,9 @@ def test_resolve_tracking_uri_defaults_to_local_sqlite_even_when_remote_state_ex
     expected = f"sqlite:///{config.tracking.backend_store_path.resolve()}"
     assert resolve_tracking_uri(config.tracking, env={}) == expected
     assert resolve_tracking_uri(config.tracking, env={"MLFLOW_TRACKING_URI": ""}) == expected
+
+
+def test_config_from_env_parses_lean_benchmark_mode() -> None:
+    config = AppConfig.from_env({"TINYHARNESS_BENCHMARK_MODE": "lean"})
+
+    assert config.benchmark.mode == BenchmarkMode.LEAN

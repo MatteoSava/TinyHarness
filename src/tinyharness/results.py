@@ -67,9 +67,18 @@ def _classify_failure(trial: TrialResult, trial_dir: Path) -> str:
     verifier_log = _read_text(trial_dir / "verifier" / "test-stdout.txt")
     stderr_log = _read_text(trial_dir / "agent" / "qwen-claude-sdk.txt")
     metadata = _metadata(trial)
+    exception_type = (
+        trial.exception_info.exception_type
+        if trial.exception_info is not None
+        else None
+    )
 
-    if _contains_timeout(trial_log):
+    if exception_type == "EnvironmentStartTimeoutError":
         return "environment_timeout"
+    if exception_type == "VerifierTimeoutError":
+        return "verifier_timeout"
+    if exception_type == "AgentTimeoutError":
+        return "agent_timeout"
     if _contains_timeout(verifier_log):
         return "verifier_timeout"
     if _contains_timeout(stderr_log):
@@ -119,6 +128,9 @@ class TrialSummary:
     first_event_latency_ms: int | None
     first_text_latency_ms: int | None
     response_complete_latency_ms: int | None
+    run_mode: str
+    gateway_debug_enabled: bool
+    live_tracing_enabled: bool
     mlflow_run_id: str | None
     trace_id: str | None
     trial_dir: Path
@@ -170,6 +182,14 @@ def load_job_summary(job_dir: Path) -> JobSummary:
         output_tokens = trial.agent_result.n_output_tokens if trial.agent_result and trial.agent_result.n_output_tokens else 0
         metadata = _metadata(trial)
         telemetry = _telemetry(trial)
+        agent_env = trial.config.agent.env if trial.config.agent and trial.config.agent.env else {}
+        run_mode = (
+            metadata.get("run_mode")
+            if isinstance(metadata.get("run_mode"), str)
+            else agent_env.get("TINYHARNESS_RUN_MODE", "debug")
+        )
+        gateway_debug_enabled = metadata.get("gateway_debug_enabled")
+        live_tracing_enabled = metadata.get("live_tracing_enabled")
         duration_ms = metadata.get("duration_ms")
         duration_api_ms = metadata.get("duration_api_ms")
         duration_seconds = _duration_seconds(trial)
@@ -228,6 +248,17 @@ def load_job_summary(job_dir: Path) -> JobSummary:
                     int(telemetry["response_complete_latency_ms"])
                     if telemetry.get("response_complete_latency_ms") is not None
                     else None
+                ),
+                run_mode=str(run_mode),
+                gateway_debug_enabled=(
+                    bool(gateway_debug_enabled)
+                    if gateway_debug_enabled is not None
+                    else bool(run_mode == "debug")
+                ),
+                live_tracing_enabled=(
+                    bool(live_tracing_enabled)
+                    if live_tracing_enabled is not None
+                    else bool(run_mode == "debug")
                 ),
                 mlflow_run_id=metadata.get("mlflow_run_id") if isinstance(metadata.get("mlflow_run_id"), str) else None,
                 trace_id=metadata.get("trace_id") if isinstance(metadata.get("trace_id"), str) else None,

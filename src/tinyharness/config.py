@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from tinyharness.constants import (
+    DEFAULT_BENCHMARK_MODE,
     DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_CACHE_PROMPT,
     DEFAULT_GPU_TYPE,
+    DEFAULT_GATEWAY_DEBUG,
     DEFAULT_HARBOR_DATASET,
+    DEFAULT_LITELLM_PORT,
     DEFAULT_MLFLOW_ALLOWED_HOSTS,
     DEFAULT_MLFLOW_ARTIFACT_MOUNT_PATH,
     DEFAULT_MLFLOW_ARTIFACT_VOLUME_NAME,
@@ -27,9 +32,13 @@ from tinyharness.constants import (
     DEFAULT_MODEL_REPO,
     DEFAULT_PARALLEL_REQUESTS,
     DEFAULT_RUNNER,
+    DEFAULT_SEED,
     DEFAULT_SERVER_PORT,
     DEFAULT_TASKS,
     DEFAULT_TASK_SET,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_TOP_K,
+    DEFAULT_TOP_P,
     MLFLOW_ARTIFACTS_DIR,
     MLFLOW_MODAL_STATE_PATH,
     MODAL_STATE_PATH,
@@ -39,6 +48,17 @@ from tinyharness.constants import (
 
 class ConfigError(ValueError):
     pass
+
+
+class BenchmarkMode(StrEnum):
+    DEBUG = "debug"
+    LEAN = "lean"
+
+    @classmethod
+    def from_value(cls, value: str | None, *, default: "BenchmarkMode") -> "BenchmarkMode":
+        if value is None:
+            return default
+        return cls(value.strip().lower())
 
 
 def _env(name: str, default: str | None = None, env: dict[str, str] | None = None) -> str | None:
@@ -61,12 +81,26 @@ def _optional_int_env(name: str, env: dict[str, str] | None = None) -> int | Non
     return int(value)
 
 
+def _float_env(name: str, default: float, env: dict[str, str] | None = None) -> float:
+    value = _env(name, env=env)
+    if value is None:
+        return default
+    return float(value)
+
+
 def _csv_env(name: str, default: tuple[str, ...], env: dict[str, str] | None = None) -> tuple[str, ...]:
     value = _env(name, env=env)
     if value is None:
         return default
     items = tuple(item.strip() for item in value.split(",") if item.strip())
     return items or default
+
+
+def _bool_env(name: str, default: bool, env: dict[str, str] | None = None) -> bool:
+    value = _env(name, env=env)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -80,8 +114,15 @@ class ModelConfig:
     model_alias: str = DEFAULT_MODEL_ALIAS
     gpu: str = DEFAULT_GPU_TYPE
     context_window: int = DEFAULT_CONTEXT_WINDOW
+    temperature: float = DEFAULT_TEMPERATURE
+    top_p: float = DEFAULT_TOP_P
+    top_k: int = DEFAULT_TOP_K
+    seed: int = DEFAULT_SEED
+    cache_prompt: bool = DEFAULT_CACHE_PROMPT
+    gateway_debug: bool = DEFAULT_GATEWAY_DEBUG
     parallel_requests: int = DEFAULT_PARALLEL_REQUESTS
     server_port: int = DEFAULT_SERVER_PORT
+    litellm_port: int = DEFAULT_LITELLM_PORT
     llama_port: int = 8001
     max_containers: int = DEFAULT_MODAL_MAX_CONTAINERS
     scaledown_window_sec: int = DEFAULT_MODAL_SCALEDOWN_WINDOW_SEC
@@ -100,8 +141,15 @@ class ModelConfig:
             model_alias=_env("TINYHARNESS_MODEL_ALIAS", DEFAULT_MODEL_ALIAS, env) or DEFAULT_MODEL_ALIAS,
             gpu=_env("TINYHARNESS_GPU_TYPE", DEFAULT_GPU_TYPE, env) or DEFAULT_GPU_TYPE,
             context_window=_int_env("TINYHARNESS_CONTEXT_WINDOW", DEFAULT_CONTEXT_WINDOW, env),
+            temperature=_float_env("TINYHARNESS_TEMPERATURE", DEFAULT_TEMPERATURE, env),
+            top_p=_float_env("TINYHARNESS_TOP_P", DEFAULT_TOP_P, env),
+            top_k=_int_env("TINYHARNESS_TOP_K", DEFAULT_TOP_K, env),
+            seed=_int_env("TINYHARNESS_SEED", DEFAULT_SEED, env),
+            cache_prompt=_bool_env("TINYHARNESS_CACHE_PROMPT", DEFAULT_CACHE_PROMPT, env),
+            gateway_debug=_bool_env("TINYHARNESS_GATEWAY_DEBUG", DEFAULT_GATEWAY_DEBUG, env),
             parallel_requests=_int_env("TINYHARNESS_PARALLEL_REQUESTS", DEFAULT_PARALLEL_REQUESTS, env),
             server_port=_int_env("TINYHARNESS_SERVER_PORT", DEFAULT_SERVER_PORT, env),
+            litellm_port=_int_env("TINYHARNESS_LITELLM_PORT", DEFAULT_LITELLM_PORT, env),
             llama_port=_int_env("TINYHARNESS_LLAMA_PORT", 8001, env),
             max_containers=_int_env("TINYHARNESS_MODAL_MAX_CONTAINERS", DEFAULT_MODAL_MAX_CONTAINERS, env),
             scaledown_window_sec=_int_env(
@@ -140,6 +188,7 @@ class AgentConfig:
 class BenchmarkConfig:
     dataset: str = DEFAULT_HARBOR_DATASET
     task_set_name: str = DEFAULT_TASK_SET
+    mode: BenchmarkMode = BenchmarkMode.DEBUG
     tasks: tuple[str, ...] | None = DEFAULT_TASKS
     n_tasks: int | None = None
     jobs_dir: Path = RUNS_DIR
@@ -152,6 +201,10 @@ class BenchmarkConfig:
         return cls(
             dataset=_env("TINYHARNESS_DATASET", DEFAULT_HARBOR_DATASET, env) or DEFAULT_HARBOR_DATASET,
             task_set_name=_env("TINYHARNESS_TASK_SET", DEFAULT_TASK_SET, env) or DEFAULT_TASK_SET,
+            mode=BenchmarkMode.from_value(
+                _env("TINYHARNESS_BENCHMARK_MODE", DEFAULT_BENCHMARK_MODE, env),
+                default=BenchmarkMode.DEBUG,
+            ),
             tasks=_csv_env("TINYHARNESS_TASKS", DEFAULT_TASKS, env),
             n_tasks=_optional_int_env("TINYHARNESS_N_TASKS", env),
             jobs_dir=Path(_env("TINYHARNESS_JOBS_DIR", RUNS_DIR.as_posix(), env) or RUNS_DIR.as_posix()),

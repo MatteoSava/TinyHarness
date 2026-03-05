@@ -22,6 +22,7 @@ from mlflow.server import get_app_client
 from tinyharness import __version__
 from tinyharness.config import (
     AppConfig,
+    BenchmarkMode,
     ConfigError,
     TrackingConfig,
     ensure_state_dirs,
@@ -135,7 +136,7 @@ def _ensure_experiment(config: AppConfig) -> tuple[str, str]:
     return experiment_id, uri
 
 
-def _log_common_tags(config: AppConfig) -> None:
+def _log_common_tags(config: AppConfig, *, live_tracing_enabled: bool) -> None:
     mlflow.set_tags(
         {
             "benchmark_suite": config.benchmark.dataset,
@@ -144,6 +145,9 @@ def _log_common_tags(config: AppConfig) -> None:
             "backend_model": config.model.model_alias,
             "gpu": config.model.gpu,
             "runner": config.benchmark.runner,
+            "run_mode": config.benchmark.mode.value,
+            "gateway_debug_enabled": str(bool(config.model.gateway_debug)).lower(),
+            "live_tracing_enabled": str(bool(live_tracing_enabled)).lower(),
         }
     )
 
@@ -174,6 +178,14 @@ def _harbor_config_sha256(harbor_config_path: Path) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _live_tracing_enabled(config: AppConfig) -> bool:
+    return config.benchmark.mode == BenchmarkMode.DEBUG
+
+
+def _log_trial_artifacts_enabled(config: AppConfig) -> bool:
+    return config.benchmark.mode == BenchmarkMode.DEBUG
+
+
 def create_parent_run(
     *,
     config: AppConfig,
@@ -183,18 +195,27 @@ def create_parent_run(
 ) -> ParentRunInfo:
     with _tracking_credentials(config.tracking):
         experiment_id, tracking_uri = _ensure_experiment(config)
+        live_tracing_enabled = _live_tracing_enabled(config) and _is_remote_tracking_uri(tracking_uri)
         with mlflow.start_run(experiment_id=experiment_id, run_name=job_name) as run:
-            _log_common_tags(config)
+            _log_common_tags(config, live_tracing_enabled=live_tracing_enabled)
             mlflow.set_tag("run_kind", "benchmark")
             mlflow.log_params(
                 {
+                    "run_mode": config.benchmark.mode.value,
                     "model_repo": config.model.hf_repo_id,
                     "model_file": config.model.hf_filename,
                     "model_alias": config.model.model_alias,
                     "context_window": config.model.context_window,
+                    "temperature": config.model.temperature,
+                    "top_p": config.model.top_p,
+                    "top_k": config.model.top_k,
+                    "seed": config.model.seed,
+                    "cache_prompt": config.model.cache_prompt,
                     "parallel_requests": config.model.parallel_requests,
                     "gateway_max_containers": config.model.max_containers,
                     "gateway_scaledown_window_sec": config.model.scaledown_window_sec,
+                    "gateway_debug_enabled": int(bool(config.model.gateway_debug)),
+                    "live_tracing_enabled": int(live_tracing_enabled),
                     "mlflow_server_max_containers": config.tracking.server_max_containers,
                     "mlflow_server_scaledown_window_sec": config.tracking.server_scaledown_window_sec,
                     "task_selection": _task_selection_param(config),
@@ -234,6 +255,7 @@ def _trial_results_row(trial: TrialSummary, child_run: ChildRunInfo) -> dict[str
         "pass_at_1": trial.pass_at_1,
         "timeout": trial.timeout,
         "failure_type": trial.failure_type,
+        "run_mode": trial.run_mode,
         "score": trial.score,
         "wall_clock_seconds": trial.wall_clock_seconds,
         "duration_ms": trial.duration_ms,
@@ -265,6 +287,8 @@ def _write_trial_results_table(summary: JobSummary, child_runs: dict[str, ChildR
 
 
 def tracking_environment(config: AppConfig, parent_run: ParentRunInfo, *, job_name: str) -> dict[str, str]:
+    if not _live_tracing_enabled(config):
+        return {}
     if not _is_remote_tracking_uri(parent_run.tracking_uri):
         return {}
     return {
@@ -520,19 +544,24 @@ def _ensure_trace(*, experiment_id: str, run_id: str, trial: TrialSummary) -> st
     return _posthoc_trace(experiment_id=experiment_id, run_id=run_id, trial=trial)
 
 
-def _create_child_run(parent_run: ParentRunInfo, trial: TrialSummary) -> ChildRunInfo:
+def _create_child_run(config: AppConfig, parent_run: ParentRunInfo, trial: TrialSummary) -> ChildRunInfo:
     existing_run = _find_existing_child_run(parent_run, trial)
     if existing_run is not None:
         with mlflow.start_run(run_id=existing_run.info.run_id):
             _log_trial_metrics(trial)
-            trace_id = _ensure_trace(
-                experiment_id=parent_run.experiment_id,
-                run_id=existing_run.info.run_id,
-                trial=trial,
+            trace_id = (
+                _ensure_trace(
+                    experiment_id=parent_run.experiment_id,
+                    run_id=existing_run.info.run_id,
+                    trial=trial,
+                )
+                if _live_tracing_enabled(config)
+                else None
             )
             if trace_id is not None:
                 mlflow.set_tag("trace_id", trace_id)
-            mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
+            if _log_trial_artifacts_enabled(config):
+                mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
         return ChildRunInfo(run_id=existing_run.info.run_id, trace_id=trace_id)
 
     with mlflow.start_run(
@@ -542,36 +571,46 @@ def _create_child_run(parent_run: ParentRunInfo, trial: TrialSummary) -> ChildRu
         parent_run_id=parent_run.run_id,
     ) as child_run:
         _log_trial_metrics(trial)
-        trace_id = _ensure_trace(
-            experiment_id=parent_run.experiment_id,
-            run_id=child_run.info.run_id,
-            trial=trial,
+        trace_id = (
+            _ensure_trace(
+                experiment_id=parent_run.experiment_id,
+                run_id=child_run.info.run_id,
+                trial=trial,
+            )
+            if _live_tracing_enabled(config)
+            else None
         )
         if trace_id is not None:
             mlflow.set_tag("trace_id", trace_id)
-        mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
+        if _log_trial_artifacts_enabled(config):
+            mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
         return ChildRunInfo(run_id=child_run.info.run_id, trace_id=trace_id)
 
 
-def _log_trial_run(parent_run: ParentRunInfo, trial: TrialSummary) -> ChildRunInfo:
+def _log_trial_run(config: AppConfig, parent_run: ParentRunInfo, trial: TrialSummary) -> ChildRunInfo:
     if trial.mlflow_run_id is not None:
         try:
             with mlflow.start_run(run_id=trial.mlflow_run_id):
                 _log_trial_metrics(trial)
-                trace_id = _ensure_trace(
-                    experiment_id=parent_run.experiment_id,
-                    run_id=trial.mlflow_run_id,
-                    trial=trial,
+                trace_id = (
+                    _ensure_trace(
+                        experiment_id=parent_run.experiment_id,
+                        run_id=trial.mlflow_run_id,
+                        trial=trial,
+                    )
+                    if _live_tracing_enabled(config)
+                    else None
                 )
                 if trace_id is not None:
                     mlflow.set_tag("trace_id", trace_id)
-                mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
+                if _log_trial_artifacts_enabled(config):
+                    mlflow.log_artifacts(trial.trial_dir.as_posix(), artifact_path="trial")
             return ChildRunInfo(run_id=trial.mlflow_run_id, trace_id=trace_id)
         except MlflowException as exc:
             if not _is_missing_run_error(exc):
                 raise
 
-    return _create_child_run(parent_run, trial)
+    return _create_child_run(config, parent_run, trial)
 
 
 def _log_parent_metrics(summary: JobSummary) -> None:
@@ -635,6 +674,9 @@ def _log_trial_metrics(trial: TrialSummary) -> None:
             "trial_name": trial.trial_name,
             "task_name": trial.task_name,
             "failure_type": trial.failure_type,
+            "run_mode": trial.run_mode,
+            "gateway_debug_enabled": str(bool(trial.gateway_debug_enabled)).lower(),
+            "live_tracing_enabled": str(bool(trial.live_tracing_enabled)).lower(),
         }
     )
     mlflow.log_metric(_trial_metric_name("solved"), trial.solved)
@@ -676,10 +718,13 @@ def finalize_benchmark_run(
     with _tracking_credentials(config.tracking):
         child_runs: dict[str, ChildRunInfo] = {}
         for trial in summary.trials:
-            child_runs[trial.trial_name] = _log_trial_run(parent_run, trial)
+            child_runs[trial.trial_name] = _log_trial_run(config, parent_run, trial)
 
         with mlflow.start_run(run_id=parent_run.run_id):
-            _log_common_tags(config)
+            _log_common_tags(
+                config,
+                live_tracing_enabled=_live_tracing_enabled(config) and _is_remote_tracking_uri(parent_run.tracking_uri),
+            )
             mlflow.set_tag("run_kind", "benchmark")
             harbor_config_path = summary.job_dir / "harbor-job-config.json"
             if harbor_config_path.exists():

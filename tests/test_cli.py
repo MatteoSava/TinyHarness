@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import subprocess
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from tinyharness.cli import main, mlflow_ui
-from tinyharness.config import AppConfig
+from tinyharness.config import AppConfig, BenchmarkMode
 
 
 def test_mlflow_ui_runs_local_server_by_default(monkeypatch, tmp_path: Path) -> None:
@@ -78,10 +79,77 @@ def test_main_dispatches_run_benchmark_with_n_tasks(monkeypatch, capsys) -> None
     exit_code = main(["run-benchmark", "--task-set", "tb10-v0", "--n-tasks", "10"])
 
     assert exit_code == 0
-    assert called == {
-        "config": config,
-        "task_set_name": "tb10-v0",
-        "tasks": None,
-        "n_tasks": 10,
-    }
+    assert called["config"].benchmark.mode == BenchmarkMode.LEAN
+    assert called["task_set_name"] == "tb10-v0"
+    assert called["tasks"] is None
+    assert called["n_tasks"] == 10
     assert "/tmp/tb10-v0-20260312-120000" in capsys.readouterr().out
+
+
+def test_main_defaults_run_benchmark_to_lean_mode(monkeypatch, capsys) -> None:
+    config = AppConfig.from_env({})
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr("tinyharness.cli._load_config", lambda: config)
+
+    def fake_run_benchmark(config_arg, *, task_set_name, tasks, n_tasks):
+        called["mode"] = config_arg.benchmark.mode
+        return SimpleNamespace(job_dir=Path("/tmp/tb10-v1-20260313-120000"))
+
+    monkeypatch.setattr("tinyharness.cli.run_benchmark", fake_run_benchmark)
+
+    exit_code = main(["run-benchmark", "--n-tasks", "10"])
+
+    assert exit_code == 0
+    assert called["mode"] == BenchmarkMode.LEAN
+    assert "/tmp/tb10-v1-20260313-120000" in capsys.readouterr().out
+
+
+def test_main_defaults_run_smoke_to_debug_mode(monkeypatch, capsys) -> None:
+    config = AppConfig.from_env({"TINYHARNESS_BENCHMARK_MODE": "lean"})
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr("tinyharness.cli._load_config", lambda: config)
+
+    def fake_run_smoke(config_arg):
+        called["mode"] = config_arg.benchmark.mode
+        return SimpleNamespace(job_dir=Path("/tmp/smoke-v0-20260313-120000"))
+
+    monkeypatch.setattr("tinyharness.cli.run_smoke_benchmark", fake_run_smoke)
+
+    exit_code = main(["run-smoke"])
+
+    assert exit_code == 0
+    assert called["mode"] == BenchmarkMode.DEBUG
+    assert "/tmp/smoke-v0-20260313-120000" in capsys.readouterr().out
+
+
+def test_main_allows_explicit_benchmark_mode_override(monkeypatch, capsys) -> None:
+    config = AppConfig.from_env({})
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr("tinyharness.cli._load_config", lambda: config)
+
+    def fake_run_benchmark(config_arg, *, task_set_name, tasks, n_tasks):
+        called["mode"] = config_arg.benchmark.mode
+        return SimpleNamespace(job_dir=Path("/tmp/custom-v0-20260313-120000"))
+
+    monkeypatch.setattr("tinyharness.cli.run_benchmark", fake_run_benchmark)
+
+    exit_code = main(["run-benchmark", "--tasks", "cancel-async-tasks", "--mode", "debug"])
+
+    assert exit_code == 0
+    assert called["mode"] == BenchmarkMode.DEBUG
+    assert "/tmp/custom-v0-20260313-120000" in capsys.readouterr().out
+
+
+def test_main_prints_agent_prompt_config(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("tinyharness.cli._load_config", lambda: AppConfig.from_env({}))
+
+    exit_code = main(["agent-prompt", "fix one benchmark task"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source"] == "dspy-gepa-seed"
+    assert payload["tools"] == ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "LS"]
+    assert "fix one benchmark task" in payload["system_prompt"]

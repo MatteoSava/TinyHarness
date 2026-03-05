@@ -6,16 +6,19 @@ import os
 import subprocess
 import sys
 import webbrowser
+from dataclasses import replace
 
 from tinyharness.benchmark import run_benchmark, run_smoke_benchmark
 from tinyharness.config import (
     AppConfig,
+    BenchmarkMode,
     ConfigError,
     ensure_state_dirs,
     local_tracking_uri,
     resolve_remote_tracking_uri,
 )
 from tinyharness.constants import MLFLOW_MODAL_STATE_PATH, MODAL_STATE_PATH, PROJECT_ROOT
+from tinyharness.dspy_prompt import build_agent_prompt_config
 from tinyharness.env import load_dotenv
 from tinyharness.mlflow_server import resolve_web_url as resolve_mlflow_web_url
 from tinyharness.mlflow_tracking import bootstrap_basic_auth, wait_for_server_ready
@@ -49,6 +52,16 @@ def _run_interactive_command(args: list[str]) -> int:
         check=False,
     )
     return result.returncode
+
+
+def _benchmark_mode_choices() -> tuple[str, ...]:
+    return tuple(mode.value for mode in BenchmarkMode)
+
+
+def _resolve_mode_arg(value: str | None, *, default: BenchmarkMode) -> BenchmarkMode:
+    if value is None:
+        return default
+    return BenchmarkMode(value)
 
 
 def serve_qwen(config: AppConfig, *, dev: bool) -> int:
@@ -183,10 +196,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated task names. Omit to use the configured task set or pair with --n-tasks to slice the dataset.",
     )
     benchmark_parser.add_argument("--n-tasks", type=int, help="Run only the first N tasks after dataset filtering.")
-    subparsers.add_parser("run-smoke", help="Run the fixed Terminal-Bench smoke subset through Harbor.")
+    benchmark_parser.add_argument(
+        "--mode",
+        choices=_benchmark_mode_choices(),
+        help="Benchmark runtime mode: `lean` skips heavy tracing/artifacts, `debug` keeps full observability.",
+    )
+    smoke_parser = subparsers.add_parser("run-smoke", help="Run the fixed Terminal-Bench smoke subset through Harbor.")
+    smoke_parser.add_argument(
+        "--mode",
+        choices=_benchmark_mode_choices(),
+        help="Smoke runtime mode. Defaults to `debug`.",
+    )
 
     fetch_parser = subparsers.add_parser("fetch-results", help="Print the markdown summary for one benchmark run.")
     fetch_parser.add_argument("run_id")
+
+    prompt_parser = subparsers.add_parser("agent-prompt", help="Print the DSPy/GEPA agent prompt config.")
+    prompt_parser.add_argument("instruction")
 
     mlflow_parser = subparsers.add_parser("mlflow-ui", help="Launch the local MLflow UI or open the remote one.")
     mlflow_parser.add_argument("--remote", action="store_true", help="Open the deployed remote MLflow UI.")
@@ -220,8 +246,9 @@ def main(argv: list[str] | None = None) -> int:
         return serve_mlflow(config)
     if args.command == "run-benchmark":
         tasks = _parse_tasks_arg(args.tasks)
+        mode = _resolve_mode_arg(args.mode, default=BenchmarkMode.LEAN)
         summary = run_benchmark(
-            config,
+            replace(config, benchmark=replace(config.benchmark, mode=mode)),
             task_set_name=args.task_set or _default_task_set_name(config, tasks=tasks, n_tasks=args.n_tasks),
             tasks=tasks,
             n_tasks=args.n_tasks,
@@ -229,11 +256,25 @@ def main(argv: list[str] | None = None) -> int:
         print(summary.job_dir.as_posix())
         return 0
     if args.command == "run-smoke":
-        summary = run_smoke_benchmark(config)
+        mode = _resolve_mode_arg(args.mode, default=BenchmarkMode.DEBUG)
+        summary = run_smoke_benchmark(replace(config, benchmark=replace(config.benchmark, mode=mode)))
         print(summary.job_dir.as_posix())
         return 0
     if args.command == "fetch-results":
         return fetch_results(args.run_id, config)
+    if args.command == "agent-prompt":
+        prompt_config = build_agent_prompt_config(args.instruction)
+        print(
+            json.dumps(
+                {
+                    "source": prompt_config.source,
+                    "tools": list(prompt_config.tools),
+                    "system_prompt": prompt_config.system_prompt,
+                },
+                indent=2,
+            )
+        )
+        return 0
     if args.command == "mlflow-ui":
         return mlflow_ui(config, remote=args.remote)
 

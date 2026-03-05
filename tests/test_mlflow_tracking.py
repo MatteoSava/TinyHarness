@@ -17,8 +17,9 @@ from harbor.models.trial.config import TaskConfig, TrialConfig
 from harbor.models.trial.result import AgentInfo, ModelInfo, TimingInfo, TrialResult
 from harbor.models.verifier.result import VerifierResult
 
-from tinyharness.config import AppConfig, ConfigError
+from tinyharness.config import AppConfig, BenchmarkMode, ConfigError
 from tinyharness.mlflow_tracking import (
+    ParentRunInfo,
     bootstrap_basic_auth,
     create_parent_run,
     finalize_benchmark_run,
@@ -27,7 +28,12 @@ from tinyharness.mlflow_tracking import (
 from tinyharness.results import load_job_summary, write_json, write_markdown_summary
 
 
-def _write_sample_run(tmp_path: Path, child_run_ids: dict[str, str] | None = None) -> Path:
+def _write_sample_run(
+    tmp_path: Path,
+    child_run_ids: dict[str, str] | None = None,
+    *,
+    run_mode: str = "debug",
+) -> Path:
     run_dir = tmp_path / "artifacts" / "runs" / "smoke-v0-20260312-120000"
     run_dir.mkdir(parents=True)
     started_at = datetime.now(UTC)
@@ -56,6 +62,7 @@ def _write_sample_run(tmp_path: Path, child_run_ids: dict[str, str] | None = Non
                 n_cache_tokens=10,
                 n_output_tokens=50,
                 metadata={
+                    "run_mode": run_mode,
                     "instruction": "fix the task",
                     "duration_ms": 2000,
                     "duration_api_ms": 1500,
@@ -226,12 +233,14 @@ def test_mlflow_logs_parent_and_updates_live_child_runs(tmp_path: Path, monkeypa
 
     parent = client.get_run(parent_run.run_id)
     assert parent.data.tags["run_kind"] == "benchmark"
+    assert parent.data.tags["run_mode"] == "debug"
     assert parent.data.metrics["benchmark.solved_pct"] == 1.0
     assert parent.data.metrics["benchmark.avg_tool_calls_per_task"] == 1.0
     assert "solved_pct" not in parent.data.metrics
 
     child = client.get_run(child_run_ids["cancel-async-tasks"])
     assert child.data.tags["run_kind"] == "task_trial"
+    assert child.data.tags["run_mode"] == "debug"
     assert child.data.metrics["trial.solved"] == 1.0
     assert child.data.metrics["trial.tool_call_count"] == 1.0
     assert child.data.tags["failure_type"] == "passed"
@@ -288,6 +297,7 @@ def test_create_parent_run_logs_all_task_selection_when_using_n_tasks(tmp_path: 
     parent = client.get_run(parent_run.run_id)
 
     assert parent.data.tags["run_kind"] == "benchmark"
+    assert parent.data.tags["run_mode"] == "debug"
     assert parent.data.params["task_selection"] == "all"
     assert parent.data.params["task_names"] == ""
     assert parent.data.params["configured_n_tasks"] == "10"
@@ -313,6 +323,21 @@ def test_tracking_environment_skips_local_sqlite_for_remote_sandboxes(tmp_path: 
     )
 
     env = tracking_environment(config, parent_run, job_name="smoke-v0-20260312-120000")
+
+    assert env == {}
+
+
+def test_tracking_environment_skips_live_tracing_in_lean_mode(monkeypatch) -> None:
+    monkeypatch.setenv("TINYHARNESS_MLFLOW_ADMIN_PASSWORD", "secret-password")
+    config = AppConfig.from_env({"MLFLOW_TRACKING_URI": "https://mlflow.example"})
+    config = replace(config, benchmark=replace(config.benchmark, mode=BenchmarkMode.LEAN))
+    parent_run = ParentRunInfo(
+        run_id="parent-run-1",
+        experiment_id="exp-1",
+        tracking_uri="https://mlflow.example",
+    )
+
+    env = tracking_environment(config, parent_run, job_name="tb10-v1-20260313-120000")
 
     assert env == {}
 
@@ -529,6 +554,75 @@ def test_mlflow_finalize_is_idempotent_for_local_posthoc_runs(tmp_path: Path, mo
         return_type="list",
     )
     assert len(traces) == 3
+
+
+def test_mlflow_lean_mode_creates_child_runs_without_traces_or_trial_artifacts(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("TINYHARNESS_MLFLOW_ADMIN_PASSWORD", "secret-password")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+    db_path = tmp_path / "state" / "mlflow" / "mlflow.db"
+    artifact_root = tmp_path / "artifacts" / "mlflow"
+    config = AppConfig.from_env(
+        {
+            "TINYHARNESS_JOBS_DIR": (tmp_path / "artifacts" / "runs").as_posix(),
+            "TINYHARNESS_MLFLOW_DB_PATH": db_path.as_posix(),
+            "TINYHARNESS_MLFLOW_ARTIFACT_ROOT": artifact_root.as_posix(),
+        }
+    )
+    config = replace(config, benchmark=replace(config.benchmark, mode=BenchmarkMode.LEAN))
+
+    server_config_path = tmp_path / "server-config.json"
+    harbor_config_path = tmp_path / "harbor-job-config.json"
+    write_json(server_config_path, {"gateway_url": "https://gateway.example"})
+    write_json(harbor_config_path, {"job_name": "tb10"})
+
+    parent_run = create_parent_run(
+        config=config,
+        job_name="tb10-v1-20260313-120000",
+        server_config_path=server_config_path,
+        harbor_config_path=harbor_config_path,
+    )
+
+    run_dir = _write_sample_run(tmp_path, child_run_ids=None, run_mode="lean")
+    summary = load_job_summary(run_dir)
+    write_markdown_summary(summary)
+
+    finalize_benchmark_run(
+        config=config,
+        parent_run=parent_run,
+        summary=summary,
+        server_config_path=server_config_path,
+    )
+
+    client = MlflowClient(tracking_uri=parent_run.tracking_uri)
+    experiment = client.get_experiment_by_name(config.tracking.experiment_name)
+    assert experiment is not None
+
+    runs = client.search_runs([experiment.experiment_id])
+    assert len(runs) == 4
+    child_runs = [run for run in runs if run.info.run_id != parent_run.run_id]
+    assert len(child_runs) == 3
+    assert all(run.data.tags["run_mode"] == "lean" for run in child_runs)
+    assert all(run.data.tags["live_tracing_enabled"] == "false" for run in child_runs)
+    traces = mlflow.search_traces(
+        locations=[experiment.experiment_id],
+        max_results=10,
+        return_type="list",
+    )
+    assert traces == []
+
+    trial_results_path = run_dir / "trial-results.jsonl"
+    trial_rows = [
+        json.loads(line)
+        for line in trial_results_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(trial_rows) == 3
+    assert all(row["trace_id"] is None for row in trial_rows)
+    assert all(
+        client.list_artifacts(run.info.run_id, path="trial") == []
+        for run in child_runs
+    )
 
 
 class _FakeAuthClient:

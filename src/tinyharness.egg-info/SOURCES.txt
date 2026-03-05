@@ -5,8 +5,11 @@ src/tinyharness/benchmark.py
 src/tinyharness/cli.py
 src/tinyharness/config.py
 src/tinyharness/constants.py
+src/tinyharness/dspy_prompt.py
 src/tinyharness/env.py
+src/tinyharness/gateway_debug.py
 src/tinyharness/harbor_agents.py
+src/tinyharness/harbor_runner.py
 src/tinyharness/mlflow_server.py
 src/tinyharness/mlflow_tracking.py
 src/tinyharness/modal_server.py
@@ -20,7 +23,14 @@ src/tinyharness.egg-info/requires.txt
 src/tinyharness.egg-info/top_level.txt
 src/tinyharness/templates/install-qwen-claude-sdk.sh.j2
 tests/test_benchmark.py
+tests/test_cli.py
 tests/test_config.py
+tests/test_dspy_prompt.py
+tests/test_gateway_debug.py
 tests/test_harbor_agents.py
+tests/test_harbor_runner.py
+tests/test_mlflow_server.py
 tests/test_mlflow_tracking.py
 tests/test_modal_server.py
+tests/test_results.py
+tests/test_sdk_runner.py

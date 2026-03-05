@@ -20,6 +20,7 @@ class ModalServerSpec:
     mount_path: str
     gpu: str
     web_port: int
+    litellm_port: int
     llama_port: int
     model_repo: str
     model_filename: str
@@ -54,14 +55,22 @@ def build_litellm_config(config: ModelConfig) -> dict[str, object]:
                 "model_name": config.model_alias,
                 "litellm_params": {
                     "model": f"openai/{config.model_alias}",
-                    "api_base": f"http://127.0.0.1:{config.llama_port}/v1",
+                    "api_base": f"http://127.0.0.1:{config.server_port}/openai-proxy/v1",
                     "api_key": os.environ.get("TINYHARNESS_PROXY_TOKEN", "tinyharness"),
+                    "temperature": config.temperature,
+                    "top_p": config.top_p,
+                    "seed": config.seed,
+                    "extra_body": {
+                        "top_k": config.top_k,
+                        "cache_prompt": config.cache_prompt,
+                    },
                 },
             }
         ],
         "general_settings": {
             "master_key": os.environ.get("TINYHARNESS_PROXY_TOKEN", "tinyharness"),
             "disable_spend_logs": True,
+            "forward_client_headers_to_llm_api": True,
         },
     }
 
@@ -110,13 +119,25 @@ JSON
   --port {config.llama_port} \
   --model "$MODEL_PATH" \
   --ctx-size {config.context_window} \
+  --seed {config.seed} \
+  --temp {config.temperature} \
+  --top-k {config.top_k} \
+  --top-p {config.top_p} \
   --parallel {config.parallel_requests} \
   --alias {config.model_alias} \
   --api-key "$TINYHARNESS_PROXY_TOKEN" \
   >/tmp/llama-server.log 2>&1 &
 
-litellm --config /tmp/litellm-config.json --host 0.0.0.0 --port {config.server_port} \
+litellm --config /tmp/litellm-config.json --host 127.0.0.1 --port {config.litellm_port} \
   >/tmp/litellm.log 2>&1 &
+
+python -m tinyharness.gateway_debug \
+  --listen-port {config.server_port} \
+  --litellm-port {config.litellm_port} \
+  --llama-port {config.llama_port} \
+  --api-key "$TINYHARNESS_PROXY_TOKEN" \
+  --debug-enabled {1 if config.gateway_debug else 0} \
+  >/tmp/gateway-debug.log 2>&1 &
 """
 
 
@@ -127,6 +148,7 @@ def build_server_spec(config: ModelConfig) -> ModalServerSpec:
         mount_path="/models",
         gpu=config.gpu,
         web_port=config.server_port,
+        litellm_port=config.litellm_port,
         llama_port=config.llama_port,
         model_repo=config.hf_repo_id,
         model_filename=config.hf_filename,
@@ -142,7 +164,13 @@ def _build_image() -> modal.Image:
             add_python="3.12",
             setup_dockerfile_commands=["ENTRYPOINT []"],
         )
-        .uv_pip_install("huggingface_hub>=0.31.4", "litellm[proxy]>=1.76.0")
+        .uv_pip_install(
+            "fastapi>=0.116.1",
+            "httpx>=0.28.1",
+            "huggingface_hub>=0.31.4",
+            "litellm[proxy]>=1.76.0",
+            "uvicorn>=0.35.0",
+        )
     )
 
 
@@ -165,6 +193,12 @@ def _wait_for_port(port: int, timeout_sec: float = 120.0) -> None:
     raise TimeoutError(f"Port {port} did not become ready within {timeout_sec} seconds.")
 
 
+def wait_for_gateway_ports(config: ModelConfig) -> None:
+    _wait_for_port(config.llama_port, timeout_sec=60.0 * 20.0)
+    _wait_for_port(config.litellm_port, timeout_sec=60.0 * 5.0)
+    _wait_for_port(config.server_port, timeout_sec=60.0 * 5.0)
+
+
 @app.function(
     image=_build_image(),
     gpu=_CONFIG.gpu,
@@ -179,8 +213,7 @@ def _wait_for_port(port: int, timeout_sec: float = 120.0) -> None:
 @modal.web_server(port=_SPEC.web_port, startup_timeout=60 * 20)
 def serve_openai_gateway() -> None:
     subprocess.Popen(["bash", "-lc", _SPEC.launch_script])
-    _wait_for_port(_SPEC.llama_port, timeout_sec=60.0 * 20.0)
-    _wait_for_port(_SPEC.web_port, timeout_sec=60.0 * 5.0)
+    wait_for_gateway_ports(_CONFIG)
 
 
 def resolve_web_url(config: ModelConfig | None = None) -> str:
