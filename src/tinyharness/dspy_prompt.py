@@ -79,8 +79,16 @@ def build_agent_prompt_config(
     tools: Sequence[str] = DEFAULT_AGENT_TOOLS,
     compiled_prompt_path: str | Path | None = None,
 ) -> AgentPromptConfig:
-    prompt_path = compiled_prompt_path or os.environ.get("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH")
     resolved_tools = tuple(tools)
+    compiled_prompt = os.environ.get("TINYHARNESS_DSPY_COMPILED_PROMPT")
+    if compiled_prompt and compiled_prompt.strip():
+        return AgentPromptConfig(
+            system_prompt=compiled_prompt.strip(),
+            tools=resolved_tools,
+            source="dspy-gepa-compiled",
+        )
+
+    prompt_path = compiled_prompt_path or os.environ.get("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH")
     if prompt_path:
         path = Path(prompt_path)
         if path.exists():

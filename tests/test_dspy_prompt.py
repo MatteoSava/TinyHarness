@@ -17,6 +17,15 @@ def test_build_agent_prompt_config_returns_custom_prompt_and_tools() -> None:
     assert "Use tool calls deliberately" in config.system_prompt
 
 
+def test_build_agent_prompt_config_uses_compiled_prompt_env(monkeypatch) -> None:
+    monkeypatch.setenv("TINYHARNESS_DSPY_COMPILED_PROMPT", "Compiled GEPA prompt.")
+
+    config = build_agent_prompt_config("fix the failing benchmark task")
+
+    assert config.source == "dspy-gepa-compiled"
+    assert config.system_prompt == "Compiled GEPA prompt."
+
+
 def test_compile_gepa_agent_prompt_returns_optimized_instruction(monkeypatch) -> None:
     calls: dict[str, object] = {}
 

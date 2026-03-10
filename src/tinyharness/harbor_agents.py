@@ -104,6 +104,19 @@ class QwenClaudeSDKAgent(BaseInstalledAgent):
         namespace = job_name or "tinyharness"
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{namespace}:{trial_name}"))
 
+    @staticmethod
+    def _compiled_prompt_from_env(base_env: dict[str, str]) -> str:
+        compiled_prompt = base_env.get("TINYHARNESS_DSPY_COMPILED_PROMPT", "")
+        if compiled_prompt:
+            return compiled_prompt
+        prompt_path = base_env.get("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH", "")
+        if not prompt_path:
+            return ""
+        path = Path(prompt_path)
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8").strip()
+
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         task_name, trial_name = self._task_identity()
         base_env = {**self._agent_env, **os.environ}
@@ -132,6 +145,7 @@ class QwenClaudeSDKAgent(BaseInstalledAgent):
             "TINYHARNESS_RUN_MODE": self._benchmark_mode,
             "TINYHARNESS_AGENT_PROMPT_MODE": base_env.get("TINYHARNESS_AGENT_PROMPT_MODE", "dspy-gepa"),
             "TINYHARNESS_DSPY_COMPILED_PROMPT_PATH": base_env.get("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH", ""),
+            "TINYHARNESS_DSPY_COMPILED_PROMPT": self._compiled_prompt_from_env(base_env),
         }
         if self._benchmark_mode == "debug":
             env.update(

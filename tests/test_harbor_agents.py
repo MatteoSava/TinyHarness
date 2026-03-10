@@ -75,6 +75,21 @@ def test_agent_command_includes_gateway_env(monkeypatch, tmp_path: Path) -> None
     assert "fix the task" in command.command
 
 
+def test_agent_command_embeds_compiled_prompt_from_host_path(monkeypatch, tmp_path: Path) -> None:
+    prompt_path = tmp_path / "compiled-agent-prompt.txt"
+    prompt_path.write_text("Compiled GEPA prompt.", encoding="utf-8")
+    trial_logs_dir = tmp_path / "cancel-async-tasks__trial" / "agent"
+    trial_logs_dir.mkdir(parents=True)
+    monkeypatch.setenv("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH", prompt_path.as_posix())
+
+    agent = QwenClaudeSDKAgent(logs_dir=trial_logs_dir, workspace_cwd="/app", benchmark_mode="lean")
+
+    command = agent.create_run_agent_commands("fix the task")[0]
+
+    assert command.env["TINYHARNESS_DSPY_COMPILED_PROMPT_PATH"] == prompt_path.as_posix()
+    assert command.env["TINYHARNESS_DSPY_COMPILED_PROMPT"] == "Compiled GEPA prompt."
+
+
 def test_install_template_installs_mlflow_for_sdk_runner(tmp_path: Path) -> None:
     agent = QwenClaudeSDKAgent(logs_dir=tmp_path, workspace_cwd="/app", benchmark_mode="debug")
 
