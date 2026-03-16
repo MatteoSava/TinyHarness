@@ -15,6 +15,8 @@ from harbor.models.trial.paths import EnvironmentPaths
 
 
 _PROXY_TOKEN_MARKER = "::tinyharness::"
+_AGENT_PYTHON_VERSION = "3.12.13"
+_AGENT_UV_VERSION = "0.11.2"
 
 
 def encode_proxy_token(
@@ -77,6 +79,8 @@ class QwenClaudeSDKAgent(BaseInstalledAgent):
                 "sdk_version": self._sdk_version,
                 "dspy_version": self._dspy_version,
                 "gepa_version": self._gepa_version,
+                "python_version": _AGENT_PYTHON_VERSION,
+                "uv_version": _AGENT_UV_VERSION,
                 "runner_script": self._runner_script_path.read_text(encoding="utf-8"),
                 "dspy_prompt_script": (Path(__file__).parent / "dspy_prompt.py").read_text(encoding="utf-8"),
                 "extra_python_packages": (
@@ -119,7 +123,7 @@ class QwenClaudeSDKAgent(BaseInstalledAgent):
 
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         task_name, trial_name = self._task_identity()
-        base_env = {**self._agent_env, **os.environ}
+        base_env = {**os.environ, **self._agent_env}
         job_name = base_env.get("TINYHARNESS_JOB_NAME", "")
         correlation_id = self._correlation_id(job_name, trial_name)
         base_url = base_env.get("ANTHROPIC_BASE_URL", "")
@@ -146,6 +150,9 @@ class QwenClaudeSDKAgent(BaseInstalledAgent):
             "TINYHARNESS_AGENT_PROMPT_MODE": base_env.get("TINYHARNESS_AGENT_PROMPT_MODE", "dspy-gepa"),
             "TINYHARNESS_DSPY_COMPILED_PROMPT_PATH": base_env.get("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH", ""),
             "TINYHARNESS_DSPY_COMPILED_PROMPT": self._compiled_prompt_from_env(base_env),
+            "TINYHARNESS_DSPY_COMPILED_PROMPT_SHA256": base_env.get(
+                "TINYHARNESS_DSPY_COMPILED_PROMPT_SHA256", ""
+            ),
         }
         if self._benchmark_mode == "debug":
             env.update(

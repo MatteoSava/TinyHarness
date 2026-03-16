@@ -8,13 +8,12 @@ elif command -v apt-get &> /dev/null; then
     apt-get install -y bash curl git procps python3 python3-venv
 fi
 
-curl -fsSL https://claude.ai/install.sh | bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -LsSf https://astral.sh/uv/{{ uv_version }}/install.sh | sh
 
 export PATH="$HOME/.local/bin:$PATH"
 
-uv python install 3.12
-uv venv /installed-agent/.venv --python 3.12
+uv python install {{ python_version }}
+uv venv /installed-agent/.venv --python {{ python_version }}
 uv pip install --python /installed-agent/.venv/bin/python \
   "claude-agent-sdk=={{ sdk_version }}" \
   "dspy=={{ dspy_version }}" \

@@ -13,6 +13,16 @@ from tinyharness.config import ModelConfig
 from tinyharness.constants import DEFAULT_MODAL_FUNCTION_NAME
 
 
+LLAMA_CPP_IMAGE_REF = "ghcr.io/ggml-org/llama.cpp@sha256:25f88607814dba0b45e00f00fb59203912c7c221a2184fab6455f952914308b7"
+MODAL_IMAGE_PYTHON_PACKAGES = (
+    "fastapi==0.135.1",
+    "httpx==0.28.1",
+    "huggingface_hub==1.6.0",
+    "litellm[proxy]==1.82.1",
+    "uvicorn==0.41.0",
+)
+
+
 @dataclass(frozen=True)
 class ModalServerSpec:
     image_tag: str
@@ -143,7 +153,7 @@ python -m tinyharness.gateway_debug \
 
 def build_server_spec(config: ModelConfig) -> ModalServerSpec:
     return ModalServerSpec(
-        image_tag="ghcr.io/ggml-org/llama.cpp:server-cuda",
+        image_tag=LLAMA_CPP_IMAGE_REF,
         volume_name=config.modal_volume_name,
         mount_path="/models",
         gpu=config.gpu,
@@ -160,17 +170,11 @@ def build_server_spec(config: ModelConfig) -> ModalServerSpec:
 def _build_image() -> modal.Image:
     return (
         modal.Image.from_registry(
-            "ghcr.io/ggml-org/llama.cpp:server-cuda",
+            LLAMA_CPP_IMAGE_REF,
             add_python="3.12",
             setup_dockerfile_commands=["ENTRYPOINT []"],
         )
-        .uv_pip_install(
-            "fastapi>=0.116.1",
-            "httpx>=0.28.1",
-            "huggingface_hub>=0.31.4",
-            "litellm[proxy]>=1.76.0",
-            "uvicorn>=0.35.0",
-        )
+        .uv_pip_install(*MODAL_IMAGE_PYTHON_PACKAGES)
     )
 
 

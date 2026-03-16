@@ -27,6 +27,9 @@ def test_build_sdk_options_uses_dspy_gepa_prompt_and_dedicated_tools() -> None:
 
 
 def test_agent_command_includes_gateway_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://ambient.example")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-token")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "ambient-model")
     trial_logs_dir = tmp_path / "cancel-async-tasks__trial" / "agent"
     trial_logs_dir.mkdir(parents=True)
     agent = QwenClaudeSDKAgent(
@@ -99,6 +102,17 @@ def test_install_template_installs_mlflow_for_sdk_runner(tmp_path: Path) -> None
     assert variables["gepa_version"]
     assert "class AgentPromptProgram" in variables["dspy_prompt_script"]
     assert 'mlflow==3.10.1' in variables["extra_python_packages"]
+
+
+def test_install_template_uses_pinned_uv_and_bundled_claude_cli(tmp_path: Path) -> None:
+    agent = QwenClaudeSDKAgent(logs_dir=tmp_path, workspace_cwd="/app", benchmark_mode="lean")
+
+    template = agent._install_agent_template_path.read_text(encoding="utf-8")
+
+    assert "https://claude.ai/install.sh" not in template
+    assert "https://astral.sh/uv/{{ uv_version }}/install.sh" in template
+    assert "uv python install {{ python_version }}" in template
+    assert "uv venv /installed-agent/.venv --python {{ python_version }}" in template
 
 
 def test_agent_command_omits_mlflow_env_in_lean_mode(tmp_path: Path) -> None:

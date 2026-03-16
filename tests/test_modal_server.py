@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from tinyharness.config import ModelConfig
-from tinyharness.modal_server import build_litellm_config, build_server_spec, wait_for_gateway_ports
+from tinyharness.modal_server import (
+    LLAMA_CPP_IMAGE_REF,
+    MODAL_IMAGE_PYTHON_PACKAGES,
+    build_litellm_config,
+    build_server_spec,
+    wait_for_gateway_ports,
+)
 
 
 def test_modal_server_spec_pins_l4_and_expected_components() -> None:
     spec = build_server_spec(ModelConfig())
 
+    assert spec.image_tag == LLAMA_CPP_IMAGE_REF
+    assert "@sha256:" in spec.image_tag
     assert spec.gpu == "L4"
     assert spec.mount_path == "/models"
     assert spec.model_repo == "unsloth/Qwen3.5-35B-A3B-GGUF"
@@ -16,6 +24,17 @@ def test_modal_server_spec_pins_l4_and_expected_components() -> None:
     assert "litellm" in spec.launch_script
     assert "python -m tinyharness.gateway_debug" in spec.launch_script
     assert "--api-key \"$TINYHARNESS_PROXY_TOKEN\"" in spec.launch_script
+
+
+def test_modal_image_python_packages_are_exactly_pinned() -> None:
+    assert MODAL_IMAGE_PYTHON_PACKAGES == (
+        "fastapi==0.135.1",
+        "httpx==0.28.1",
+        "huggingface_hub==1.6.0",
+        "litellm[proxy]==1.82.1",
+        "uvicorn==0.41.0",
+    )
+    assert all("==" in package and ">=" not in package for package in MODAL_IMAGE_PYTHON_PACKAGES)
 
 
 def test_modal_server_spec_uses_deterministic_sampling_defaults() -> None:
