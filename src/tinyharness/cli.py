@@ -7,6 +7,7 @@ import subprocess
 import sys
 import webbrowser
 from dataclasses import replace
+from pathlib import Path
 
 from tinyharness.benchmark import run_benchmark, run_smoke_benchmark
 from tinyharness.config import (
@@ -20,6 +21,7 @@ from tinyharness.config import (
 from tinyharness.constants import MLFLOW_MODAL_STATE_PATH, MODAL_STATE_PATH, PROJECT_ROOT
 from tinyharness.dspy_prompt import build_agent_prompt_config
 from tinyharness.env import load_dotenv
+from tinyharness.gepa_prompt_compiler import DEFAULT_GEPA_PROMPT_DIR, compile_prompt
 from tinyharness.mlflow_server import resolve_web_url as resolve_mlflow_web_url
 from tinyharness.mlflow_tracking import bootstrap_basic_auth, wait_for_server_ready
 from tinyharness.modal_server import resolve_web_url
@@ -214,6 +216,11 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_parser = subparsers.add_parser("agent-prompt", help="Print the DSPy/GEPA agent prompt config.")
     prompt_parser.add_argument("instruction")
 
+    compile_parser = subparsers.add_parser("compile-gepa-prompt", help="Compile the agent prompt with DSPy GEPA.")
+    compile_parser.add_argument("--max-metric-calls", type=int, default=8)
+    compile_parser.add_argument("--max-tokens", type=int, default=1536)
+    compile_parser.add_argument("--output-dir", type=Path, default=DEFAULT_GEPA_PROMPT_DIR)
+
     mlflow_parser = subparsers.add_parser("mlflow-ui", help="Launch the local MLflow UI or open the remote one.")
     mlflow_parser.add_argument("--remote", action="store_true", help="Open the deployed remote MLflow UI.")
 
@@ -274,6 +281,9 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+    if args.command == "compile-gepa-prompt":
+        compile_prompt(max_metric_calls=args.max_metric_calls, output_dir=args.output_dir, max_tokens=args.max_tokens)
         return 0
     if args.command == "mlflow-ui":
         return mlflow_ui(config, remote=args.remote)

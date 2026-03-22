@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from dataclasses import replace
@@ -40,6 +41,27 @@ def test_build_harbor_job_config_uses_modal_and_custom_agent() -> None:
     assert job_config.agents[0].kwargs["benchmark_mode"] == "debug"
     assert job_config.datasets[0].name == "terminal-bench"
     assert job_config.datasets[0].task_names == list(config.benchmark.tasks)
+
+
+def test_build_harbor_job_config_records_compiled_prompt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    prompt_path = tmp_path / "compiled-agent-prompt.txt"
+    prompt_path.write_text("Compiled prompt from GEPA.", encoding="utf-8")
+    monkeypatch.setenv("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH", prompt_path.as_posix())
+
+    job_config = build_harbor_job_config(
+        AppConfig.from_env({}),
+        base_url="https://gateway.example",
+        proxy_token="secret-token",
+        job_name="gepa-v0-20260312-120000",
+    )
+
+    agent_env = job_config.agents[0].env
+    assert agent_env["TINYHARNESS_AGENT_PROMPT_MODE"] == "dspy-gepa"
+    assert agent_env["TINYHARNESS_DSPY_COMPILED_PROMPT_PATH"] == prompt_path.as_posix()
+    assert agent_env["TINYHARNESS_DSPY_COMPILED_PROMPT"] == "Compiled prompt from GEPA."
+    assert agent_env["TINYHARNESS_DSPY_COMPILED_PROMPT_SHA256"] == hashlib.sha256(
+        b"Compiled prompt from GEPA."
+    ).hexdigest()
 
 
 def test_build_harbor_job_config_supports_first_n_tasks_without_explicit_task_names() -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -31,6 +33,27 @@ def _resolve_task_names(tasks: tuple[str, ...] | None) -> list[str] | None:
     return list(tasks)
 
 
+def _resolve_agent_prompt_env() -> dict[str, str]:
+    prompt_env = {
+        "TINYHARNESS_AGENT_PROMPT_MODE": os.environ.get("TINYHARNESS_AGENT_PROMPT_MODE", "dspy-gepa"),
+    }
+    compiled_prompt = os.environ.get("TINYHARNESS_DSPY_COMPILED_PROMPT", "").strip()
+    compiled_prompt_path = os.environ.get("TINYHARNESS_DSPY_COMPILED_PROMPT_PATH", "").strip()
+    if compiled_prompt_path:
+        prompt_env["TINYHARNESS_DSPY_COMPILED_PROMPT_PATH"] = compiled_prompt_path
+        if not compiled_prompt:
+            path = Path(compiled_prompt_path)
+            if not path.exists():
+                raise FileNotFoundError(f"Compiled DSPy prompt path does not exist: {compiled_prompt_path}")
+            compiled_prompt = path.read_text(encoding="utf-8").strip()
+    if compiled_prompt:
+        prompt_env["TINYHARNESS_DSPY_COMPILED_PROMPT"] = compiled_prompt
+        prompt_env["TINYHARNESS_DSPY_COMPILED_PROMPT_SHA256"] = hashlib.sha256(
+            compiled_prompt.encode("utf-8")
+        ).hexdigest()
+    return prompt_env
+
+
 def build_harbor_job_config(
     config: AppConfig,
     *,
@@ -48,6 +71,7 @@ def build_harbor_job_config(
         "TINYHARNESS_JOB_NAME": job_name,
         "TINYHARNESS_RUN_MODE": config.benchmark.mode.value,
     }
+    agent_env.update(_resolve_agent_prompt_env())
     if tracking_env:
         agent_env.update(tracking_env)
     return JobConfig(

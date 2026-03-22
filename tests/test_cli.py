@@ -153,3 +153,35 @@ def test_main_prints_agent_prompt_config(monkeypatch, capsys) -> None:
     assert payload["source"] == "dspy-gepa-seed"
     assert payload["tools"] == ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "LS"]
     assert "fix one benchmark task" in payload["system_prompt"]
+
+
+def test_main_dispatches_compile_gepa_prompt(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tinyharness.cli._load_config", lambda: AppConfig.from_env({}))
+    called: dict[str, object] = {}
+
+    def fake_compile_prompt(*, max_metric_calls: int, output_dir: Path, max_tokens: int) -> Path:
+        called["max_metric_calls"] = max_metric_calls
+        called["output_dir"] = output_dir
+        called["max_tokens"] = max_tokens
+        return output_dir / "compiled-agent-prompt.txt"
+
+    monkeypatch.setattr("tinyharness.cli.compile_prompt", fake_compile_prompt)
+
+    exit_code = main(
+        [
+            "compile-gepa-prompt",
+            "--max-metric-calls",
+            "4",
+            "--max-tokens",
+            "512",
+            "--output-dir",
+            tmp_path.as_posix(),
+        ]
+    )
+
+    assert exit_code == 0
+    assert called == {
+        "max_metric_calls": 4,
+        "output_dir": tmp_path,
+        "max_tokens": 512,
+    }
