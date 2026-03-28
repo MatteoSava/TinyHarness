@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "tinyharness"
 version = "0.1.0"
 description = "Tiny harness for Qwen-backed Claude-style Terminal-Bench smoke runs."
-readme = "AGENTS.md"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "claude-agent-sdk==0.1.48",
