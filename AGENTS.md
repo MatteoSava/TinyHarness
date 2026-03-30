@@ -32,7 +32,7 @@ TinyHarness benchmarks coding-agent behavior on Terminal-Bench 2.0. The default 
 - Remote benchmark logging is opt-in. Set `MLFLOW_TRACKING_URI` to the remote server URL before `run-smoke` if you want runs to log there instead of the local store.
 
 ## Architecture
-- Runtime config lives in [`ARCHITECTURE.md`](/Users/matteo/Developer/TinyHarness/ARCHITECTURE.md).
+- Runtime config lives in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - Python package: `src/tinyharness/`
 - Tests: `tests/`
 - Generated run artifacts: `artifacts/runs/`

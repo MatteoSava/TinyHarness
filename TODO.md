@@ -7,7 +7,7 @@
   - Feed them through `TINYHARNESS_DSPY_COMPILED_PROMPT_PATH`
 - [TODO] Add an integration smoke that runs one sandbox with the DSPy prompt path enabled
 
-## Public Readiness
+## Remaining Work
 - [DONE] Add README with project narrative, quick start, and current limitations
 - [DONE] Remove generated egg-info and local MLflow DB files from git
 - [TODO] Pin the agent installer script by checksum if the upstream uv installer publishes stable checksums

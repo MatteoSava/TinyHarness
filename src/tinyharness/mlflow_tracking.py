@@ -32,7 +32,7 @@ from tinyharness.config import (
 from tinyharness.results import JobSummary, TrialSummary
 
 
-DEFAULT_MLFLOW_ADMIN_PASSWORD = "password1234"
+DEFAULT_MLFLOW_ADMIN_PASSWORD = "password1234"  # bootstrap default, replaced on first deploy
 
 
 @dataclass(frozen=True)
